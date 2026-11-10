@@ -25,10 +25,11 @@ sys.path.insert(0, str(HERE / "shared"))
 import wbkit  # noqa: E402
 
 import hbr_cache  # noqa: E402
+import hbr_enemy_parameters  # noqa: E402
 
 APP_ID = "hbr"
 APP_NAME = "HBR 研究室"
-VERSION = "0.11.0"
+VERSION = "0.11.1"
 PORT = 8787
 BACKUP_KEEP = 40
 SNAPSHOT_KEEP = 60
@@ -130,6 +131,13 @@ def build_app(root: Path | None = None, port: int = PORT) -> wbkit.WorkbenchApp:
     store = ArchiveStore(root)
     app = wbkit.WorkbenchApp(APP_ID, APP_NAME, HERE / "public", root / "runtime.json", VERSION, port)
     app.store = store  # 测试用
+
+    @app.get("/api/enemy-parameters")
+    def get_enemy_parameters(_query):
+        try:
+            return {"ok": True, **hbr_enemy_parameters.read_parameters(root)}
+        except (OSError, ValueError) as error:
+            raise wbkit.HttpError(422, "本机敌参数未应用：" + (str(error) if isinstance(error, ValueError) else "文件无法读取")) from error
 
     @app.get("/api/archive")
     def get_archive(_query):

@@ -174,6 +174,31 @@ export function stageEnemies(event,stage){
   return (stage?.enemies||[]).filter(e=>e?.label).map(e=>({...e,detail:event?.enemies?.[e.label]||null}));
 }
 
+/** Resolve the exact numbers used by every simulator/view. Public enemy base
+ * parameters are not evidence of a wave difficulty multiplier; keep provenance
+ * and explicit local overrides without inventing a scaling curve. */
+export function resolveEnemyParameters(event,stage,pick,{override={}}={}){
+  if(!pick?.label)throw new Error('缺少敌人标签');
+  if(!override||typeof override!=='object'||Array.isArray(override))throw new TypeError('敌人参数覆盖必须是对象');
+  const base=event?.enemies?.[pick.label]?.base||{},fields={},original={},values={};
+  const spec={dp:['dp','dp'],hp:['hp','hp'],border:['paramBorder','param_border']};
+  for(const [key,[stageKey,baseKey]] of Object.entries(spec)){
+    const stageValue=pick[stageKey],baseValue=base[baseKey];
+    const hasStage=stageValue!==undefined&&stageValue!==null;
+    const hasBase=baseValue!==undefined&&baseValue!==null;
+    original[key]=hasStage?stageValue:hasBase?baseValue:null;
+    const custom=Object.hasOwn(override,key)&&override[key]!==undefined&&override[key]!==null;
+    const value=custom?override[key]:original[key];
+    if(value!==null&&(typeof value!=='number'||!Number.isFinite(value)||value<0||(key==='hp'&&value===0)))throw new RangeError(`敌人 ${key} 必须是${key==='hp'?'正':'非负'}有限数值`);
+    values[key]=value;
+    fields[key]=custom?'override':hasStage?'stage':hasBase?'enemy-base':'missing';
+  }
+  return {...values,parameterSource:{label:pick.label,stage:stage?.label||null,fields,original,
+    // Legacy wave exports contain raw enemy base values, with no per-level table.
+    difficultyVerified:event?.kind==='wave'?stage?.parameterSource?.difficultyVerified===true:null,
+    basis:stage?.parameterSource?.kind||null}};
+}
+
 // ---------------------------------------------------------------- 遭遇战（セラフ遭遇戦演習）计分
 // 依据：社区「遭遇战出分计算.xlsx」「OD与破坏率计算表 261011」第 2 表、HBR Toolbox 遭遇战出分（三者一致）。
 //   每阶段伤害分（按该阶段全部伤害，不是单回合最大）：x = min(伤害,60 亿)/5000，分段斜率 1 / 0.4 / 0.2 / 0.04 / 0.01 / 0.0001

@@ -1,11 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeResultSettings, packOptimizationResult, scoreGap, ruleCombinations,successfulScores,optimizationScope,reusableCandidates} from '../public/planner-results.mjs';
+import {normalizeResultSettings, packOptimizationResult, scoreGap, ruleCombinations,successfulScores,optimizationScope,reusableCandidates,visibleCandidates} from '../public/planner-results.mjs';
 
 test('old or invalid settings retain ten results and unrestricted teams', () => {
-  assert.deepEqual(normalizeResultSettings(), {teamElement: '', top: 10});
-  assert.deepEqual(normalizeResultSettings({teamElement: 'healer', top: -1}), {teamElement: '', top: 10});
-  assert.deepEqual(normalizeResultSettings({teamElement: 'nonelemental', top: '20'}), {teamElement: 'nonelemental', top: 20});
+  assert.deepEqual(normalizeResultSettings(), {teamElement: '', top: 10,minSuccess:0,minSuccessBasis:'onPlan'});
+  assert.deepEqual(normalizeResultSettings({teamElement: 'healer', top: -1}), {teamElement: '', top: 10,minSuccess:0,minSuccessBasis:'onPlan'});
+  assert.deepEqual(normalizeResultSettings({teamElement: 'nonelemental', top: '20',minSuccess:0.95,minSuccessBasis:'success'}), {teamElement: 'nonelemental', top: 20,minSuccess:0.95,minSuccessBasis:'success'});
+});
+
+test('success cutline preserves adoption indices and distinguishes original axes from extended clears',()=>{
+  const result={top:[{mc:{success:1,onPlan:0.5}},{mc:{success:0.95,onPlan:0.95}},{mc:{success:1,onPlan:1}},{mc:{success:0.9999,onPlan:0.9999}}]};
+  assert.deepEqual(visibleCandidates(result,{minSuccess:1}).map(x=>x.index),[2]);
+  assert.deepEqual(visibleCandidates(result,{minSuccess:1,minSuccessBasis:'success'}).map(x=>x.index),[0,2]);
+  assert.deepEqual(visibleCandidates(result,{minSuccess:0.95}).map(x=>x.index),[1,2,3]);
+  const snapshot=packOptimizationResult('wave:test',{top:[],rejectedBySuccess:12,qualifiedCandidates:0,resultCandidates:12},{minSuccess:1,minSuccessBasis:'onPlan',battleVersion:'v2',enemyContextKey:'key'});
+  assert.deepEqual(snapshot.top,[]);assert.equal(snapshot.minSuccess,1);assert.equal(snapshot.rejectedBySuccess,12);
+  assert.equal(snapshot.battleVersion,'v2');assert.equal(snapshot.enemyContextKey,'key');
 });
 
 test('latest search snapshot restores alternate teams, rules and axes without aliasing live state', () => {

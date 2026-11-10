@@ -17,6 +17,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -248,6 +249,49 @@ def dates(ev: dict) -> tuple[str | None, str | None]:
     return ev.get('in_date') or (min(ins) if ins else None), ev.get('out_date') or (max(outs) if outs else None)
 
 
+def parse_wave_battle_label(label: str):
+    """Battle names may include a difficulty suffix: HARD_05_40 is phase 5."""
+    match = re.fullmatch(r'(?:Battle\.)?WaveBattle\d+_(HARD|EASY)_(\d+)(?:_(\d+))?', str(label))
+    if not match:
+        return None
+    mode, phase, difficulty = match.groups()
+    phase, difficulty = int(phase), int(difficulty) if difficulty is not None else None
+    if not 1 <= phase <= 5 or (difficulty is not None and difficulty < 1):
+        return None
+    return mode, phase, difficulty
+
+
+def select_wave_groups(details: list[dict], preferred_difficulty: int = 40) -> list[dict]:
+    """Select one public enemy template per phase; never combine level variants.
+
+    The template's raw base stats remain uncalibrated. Per-level values belong in
+    the separately sourced parameter layer, not in these public enemy details.
+    """
+    groups = {}
+    for detail in details:
+        for battle in detail.get('battles') or []:
+            key = parse_wave_battle_label(battle.get('label', ''))
+            if key is None:
+                continue
+            group = groups.setdefault(key, {'battleLabel': battle['label'], 'enemies': {}})
+            group['enemies'][detail['label']] = detail
+    mode = 'HARD' if any(k[0] == 'HARD' for k in groups) else 'EASY'
+    selected = []
+    for phase in range(1, 6):
+        candidates = {k[2]: v for k, v in groups.items() if k[:2] == (mode, phase)}
+        selected_mode = mode
+        if not candidates and mode != 'EASY':
+            candidates = {k[2]: v for k, v in groups.items() if k[:2] == ('EASY', phase)}
+            selected_mode = 'EASY'
+        if not candidates:
+            continue
+        difficulty = preferred_difficulty if preferred_difficulty in candidates else None if None in candidates else max(candidates)
+        chosen = candidates[difficulty]
+        selected.append({'mode': selected_mode, 'phase': phase, 'sourceDifficulty': difficulty,
+                         'battleLabel': chosen['battleLabel'], 'enemies': list(chosen['enemies'].values())})
+    return selected
+
+
 def build_event(kind: str, ev: dict, zh: Zh) -> dict:
     label = ev.get('label', '')
     in_date, out_date = dates(ev)
@@ -315,24 +359,19 @@ def main(argv=None) -> int:
         if ev['kind'] != 'wave':
             continue
         nn = ev['label'][-2:]
-        groups = {}
+        wave_details = []
         for lab in sorted(l for l in stats_only if l.startswith(f'waveBattle_{nn}_')):
             path = fetch(MASTER + f'enemies/{lab}.json', raw / 'enemies' / f'{lab}.json', args.offline)
             if not path:
                 continue
             det = read_json(path)
-            for b in det.get('battles') or []:
-                parts = str(b.get('label', '')).split('_')
-                if len(parts) >= 3 and parts[-1].isdigit():
-                    groups.setdefault((parts[-2], int(parts[-1])), []).append(det)
-        mode = 'HARD' if any(k[0] == 'HARD' for k in groups) else next((k[0] for k in groups), 'HARD')
-        for phase in range(1, 6):
-            dets = groups.get((mode, phase)) or groups.get(('EASY', phase)) or []
-            if not dets:
-                continue
+            wave_details.append(det)
+        for selected in select_wave_groups(wave_details):
+            mode, phase, dets = selected['mode'], selected['phase'], selected['enemies']
             bp = lambda d: d.get('base_param') or {}
             ev['stages'].append({
                 'group': 'wave', 'id': phase, 'label': f'{ev["label"]}_{mode}_{phase:02d}', 'phase': phase,
+                'battleLabel': selected['battleLabel'], 'sourceDifficulty': selected['sourceDifficulty'],
                 'difficultyName': f'第 {phase} 阶段', 'enemies': [{
                     'label': d['label'], 'name': zh.get('enemy', 'name', d['label']) or d.get('name', ''),
                     'dp': bp(d).get('dp'), 'hp': bp(d).get('hp'), 'attackRate': bp(d).get('atk_rate'),

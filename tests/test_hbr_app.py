@@ -109,6 +109,26 @@ class HttpTests(unittest.TestCase):
 
     def test_api_requires_token(self):
         self.assertEqual(self.request("/api/archive", token=False)[0], 403)
+        self.assertEqual(self.request("/api/enemy-parameters", token=False)[0], 403)
+
+    def test_local_enemy_parameters_empty_valid_and_invalid(self):
+        from test_wave_parameters import synthetic_parameters
+        path = Path(self.tmp.name) / "enemy-parameters.json"
+        try:
+            status, text = self.request("/api/enemy-parameters")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(text), {"ok": True, "version": 1, "source": None, "events": {}})
+            value = synthetic_parameters(); value["source"]["path"] = "PRIVATE/PATH"
+            path.write_text(json.dumps(value), encoding="utf-8")
+            status, text = self.request("/api/enemy-parameters")
+            self.assertEqual(status, 200); self.assertTrue(json.loads(text)["events"])
+            self.assertNotIn("PRIVATE", text)
+            path.write_text('{"version":1,"events":{"bad":{}}}', encoding="utf-8")
+            status, text = self.request("/api/enemy-parameters")
+            self.assertEqual(status, 422); self.assertFalse(json.loads(text)["ok"])
+            self.assertNotIn("events", json.loads(text))
+        finally:
+            path.unlink(missing_ok=True)
 
     def test_roundtrip(self):
         status, text = self.request("/api/archive")

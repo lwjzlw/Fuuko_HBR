@@ -2,7 +2,7 @@
 import {simulateDesign,emptyTurn,skillChoices} from './sim/designer.mjs';
 import {waveScore} from './boss-model.mjs';
 import {CARDS} from './sim/cards.mjs';
-import {groupAxisRows,renderAxisRows} from './planner-axis.mjs';
+import {groupAxisRows,renderAxisRows,replayAssumptions} from './planner-axis.mjs';
 
 const ROUNDS=['main','extra'];
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -75,7 +75,7 @@ ${iss.length?`<ul class="compact">${iss.map(x=>`<li class="${x.level==='error'?'
 <label class="inline"><input id="dz-overkill" type="checkbox" ${overkill?'checked':''}>伤害分计溢出伤害（推定）</label></div>
 <p class="compact">各阶段伤害 ${damages.map((d,i)=>`${i+1}面 ${n(d)}（${n(sc.phaseScores[i])} 分）`).join(' · ')}</p>
 <p class="compact">伤害分 ${n(sc.damageScore)} + 回合分 ${n(sc.roundScore)}（${res.turns} 回合）+ 难度分 ${n(sc.difficultyScore)} → × 规则 ${sc.multiplier.toFixed(2)} = <b>${n(sc.total)}</b>${res.failed?' <span class="pill-error">（设计中途失败，分数无效）</span>':''}</p>
-<p class="subtle compact">计分按社区遭遇战出分表 / HBR Toolbox。敌人 HP/DP 用主数据值（第 2 期 ラビットチョッパー 与 atwiki 难度 40 数值一致，难度不再放大）。勾选“计溢出”时每阶段伤害 = 画面显示的全部伤害（含击破那一下超出的部分），否则只计实际扣掉的 DP/HP。</p></div>`;
+<p class="subtle compact">计分按社区遭遇战出分表 / HBR Toolbox。敌人使用主界面“敌方参数”所列数值，DP/HP 底表尚未完成各难度实战校准；可填写已知实测值，修改难度会重建回放。勾选“计溢出”时每阶段伤害 = 画面显示的全部伤害（含击破那一下超出的部分），否则只计实际扣掉的 DP/HP。</p></div>`;
   }
   const flags=Object.entries(res.flags?.approx||{}).map(([k,v])=>`${e(k)} ×${v}`);
   host.innerHTML=`<div class="split-heading"><h2>排轴设计器 <small class="subtle">手排每回合行动，修改即重放</small></h2>
@@ -83,6 +83,7 @@ ${iss.length?`<ul class="compact">${iss.map(x=>`<li class="${x.level==='error'?'
 <label>敌方伤害<select id="dz-vary">${[['1.1','最大（×1.1，保守）'],['1','平均']].map(([k,t])=>`<option value="${k}" ${String(view.vary)===k?'selected':''}>${t}</option>`).join('')}</select></label>
 <label>敌方单体攻击<select id="dz-target">${[['worst','集火最危险的人（保守）'],['spread','平均分摊（期望）']].map(([k,t])=>`<option value="${k}" ${(view.target||'worst')===k?'selected':''}>${t}</option>`).join('')}</select></label>
 <button id="dz-clear" class="quiet" type="button">清空</button></div></div>
+<p class="subtle compact axis-assumptions">${e(replayAssumptions(view.crit))}</p>
 ${phases.length>1?`<div class="tags">${phases.map((p,i)=>`<button class="${i===view.phase?'primary':'quiet'}" data-dz-phase="${i}" type="button">第 ${i+1} 阶段 · ${e(p.name)}${res.phases[i]?.cleared?' ✓':''}</button>`).join('')}</div>`:''}
 ${res.failed?`<p class="pill-error">第 ${res.failed} 回合有成员 HP 清零：战斗失败。</p>`:''}
 ${phases.length>1&&view.phase>0?`<p class="compact"><label>进入本阶段前选的战术卡 <select id="dz-card"><option value="">（不选）</option>${[...new Set(CARDS.map(c=>c.cat))].map(cat=>`<optgroup label="${e(cat)}">${CARDS.filter(c=>c.cat===cat).map(c=>`<option value="${c.id}" ${ph.card===c.id?'selected':''}>${e(c.name)}</option>`).join('')}</optgroup>`).join('')}</select></label>

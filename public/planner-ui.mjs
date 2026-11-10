@@ -15,8 +15,9 @@ import {cardById} from './sim/cards.mjs';
 import {cardSeenProb} from './sim/optimizer.mjs';
 import {axisView} from './planner-axis.mjs';
 import {loadoutDetailsHtml} from './planner-loadout.mjs';
-import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations,successfulScores,optimizationScope,reusableCandidates} from './planner-results.mjs';
+import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations,successfulScores,optimizationScope,reusableCandidates,visibleCandidates} from './planner-results.mjs';
 import {SEARCH_PRESETS} from './sim/optimizer-options.mjs';
+import {plannerPhases,plannerStages,withEnemyParameters,enemyParameterKey,enemyContextKey,BATTLE_MODEL_VERSION,resultMatchesEnemies,sameRuleIds} from './planner-enemies.mjs';
 
 const KIND_LABEL={scoreAttack:'积分挑战',dimension:'异时层',wave:'遭遇战'};
 const CRIT_LABEL={expected:'期望值',none:'不暴击',all:'全暴击'};
@@ -25,7 +26,7 @@ const ELEM_LABEL={fire:'火',ice:'冰',thunder:'雷',light:'光',dark:'暗',none
 
 export function createPlannerUI(ctx){
   const {e,n,notice,catalog,equipment,getArchive,save,cacheDecks}=ctx;
-  let index=null,skills=null,statsData=null,loadError=null,worker=null,result=null,progress=null,shown=0,decks=null,lastParty=null,lastAxisEnv=null;
+  let index=null,skills=null,statsData=null,enemyParameters=null,loadError=null,worker=null,result=null,progress=null,shown=0,decks=null,lastParty=null,lastAxisEnv=null;
   const events=new Map();
   const sel={kind:'scoreAttack',label:'',stage:-1,enemy:'',rules:[]};
   const opt={objective:'score',maxTurns:8,beam:24,critMode:'expected',allowOd:true,odWindows:'both'};
@@ -34,15 +35,16 @@ export function createPlannerUI(ctx){
   async function load(){
     if(index&&skills)return;
     try{
-      const [a,b,c]=await Promise.all([fetch('/data/bosses/index.json',{cache:'no-store'}),fetch('/data/skills.json',{cache:'no-store'}),fetch('/data/stats.json',{cache:'no-store'})]);
+      const [a,b,c,d]=await Promise.all([fetch('/data/bosses/index.json',{cache:'no-store'}),fetch('/data/skills.json',{cache:'no-store'}),fetch('/data/stats.json',{cache:'no-store'}),fetch('/api/enemy-parameters',{cache:'no-store',headers:{'X-WB-Token':document.querySelector('meta[name="wb-token"]')?.content||''}})]);
       if(!c.ok)throw Error('面板数据 HTTP '+c.status+'（运行 python scripts/build-stats.py）');
       if(!a.ok)throw Error('Boss 目录 HTTP '+a.status+'（运行 python scripts/build-bosses.py）');
       if(!b.ok)throw Error('技能表 HTTP '+b.status+'（运行 python scripts/build-skills.py）');
-      index=await a.json();skills=await b.json();statsData=await c.json();
+      if(!d.ok)throw Error('本机敌方参数加载失败（HTTP '+d.status+'），请检查数据文件或重启研究室服务。');
+      index=await a.json();skills=await b.json();statsData=await c.json();enemyParameters=await d.json();
     }catch(err){loadError=err;}
   }
   async function eventOf(entry){
-    if(!events.has(entry.file)){const r=await fetch('/data/bosses/'+entry.file,{cache:'no-store'});if(!r.ok)throw Error('Boss 数据 HTTP '+r.status);events.set(entry.file,await r.json());}
+    if(!events.has(entry.file)){const r=await fetch('/data/bosses/'+entry.file,{cache:'no-store'});if(!r.ok)throw Error('Boss 数据 HTTP '+r.status);events.set(entry.file,withEnemyParameters(await r.json(),enemyParameters));}
     return events.get(entry.file);
   }
   let settingsLoaded=false,openPanel=null;
@@ -77,6 +79,19 @@ export function createPlannerUI(ctx){
     }
     return enemyLine(ev,stage).replace('<p class="compact">','<p class="pl-foe">');
   }
+  function enemyParametersHtml(ev,stage){
+    try{
+      const P=planner(),difficulty=ev.kind==='wave'?Number(P.waveSettings?.difficulty||40):null;
+      const phases=phasesFor(ev,stage,[]),stages=plannerStages(ev,stage,P.waveSettings),custom=P.enemyOverrides?.[`${ev.kind}:${ev.label}`]||{};
+      const verified=ev.kind==='wave'&&phases.every(p=>p.enemies.every(x=>x.parameterSource.difficultyVerified));
+      return `${ev.kind==='wave'&&!verified?'<p class="pill-error">当前难度尚缺阶段 DP / HP 参数，正在使用敌人基础值；分数、破盾与击杀预测不能作为实战依据。</p>':''}<details class="pl-enemy-parameters"><summary>敌方参数：模拟实际使用的 DP / HP / 能力值${verified?' · 已载入本机难度表':''}</summary>
+      <p class="subtle compact">${ev.kind==='wave'?(verified?'已按难度、阶段、敌人槽位读取本机游戏静态参数表。':'当前使用公开底表；没有实值时不猜测 DP / HP 倍率。'):''}可逐个填写实测值，留空恢复默认；修改后需要重新搜索。</p>
+      <div class="table-wrap"><table><thead><tr><th>阶段 / 敌人</th><th>DP</th><th>HP</th><th>能力值</th></tr></thead><tbody>${phases.flatMap((p,pi)=>p.enemies.map(x=>{
+        const key=enemyParameterKey(stages[pi],x,difficulty),over=custom[key]||{};
+        return `<tr><td>${ev.kind==='wave'?pi+1:sel.stage+1}. ${e(x.name)}</td>${[['dp',x.maxDp],['hp',x.maxHp],['border',x.border]].map(([field,value])=>`<td><b data-enemy-current="${e(key)}" data-enemy-field="${field}">${n(value)}</b><small class="subtle">${Object.hasOwn(over,field)?' · 手填':verified?' · 难度表':field==='border'&&ev.label==='WaveBattle0008'&&difficulty===40?' · 已确认':' · 公开底表'}</small><input type="number" min="${field==='hp'?1:0}" step="1" aria-label="${e(x.name)} ${field} 覆盖值" data-enemy-param="${e(key)}" data-enemy-field="${field}" value="${over[field]??''}" placeholder="手动覆盖，留空恢复" ${optWorker?'disabled':''}></td>`).join('')}</tr>`;
+      })).join('')}</tbody></table></div></details>`;
+    }catch(err){return `<p class="pill-error">敌方参数不可用：${e(err.message)}</p>`;}
+  }
   const SCALE_HINT={quick:'快速搜索',standard:'标准搜索',deep:'深入搜索'};
 
   async function mount(host){
@@ -104,15 +119,19 @@ export function createPlannerUI(ctx){
     <label>期数<select id="pl-event">${list.map(x=>`<option value="${e(x.label)}" ${x.label===sel.label?'selected':''}>${e(shortName(x))} · ${e(x.bosses.slice(0,2).join('、'))}</option>`).join('')}</select></label>
   </div>
   ${ev&&stage?`<div class="pl-target">
-    ${!wave?`<label>难度<select id="pl-stage">${ev.stages.map((s,i)=>`<option value="${i}" ${i===sel.stage?'selected':''}>${e(s.group&&s.group!=='main'&&s.group!=='wave'?s.group+' · ':'')}${s.difficulty!=null?'Lv.'+s.difficulty+' ':''}${e(s.difficultyName)}${s.enemies?.filter(x=>x.label).length===1?' · '+e(s.enemies.find(x=>x.label).name||''):''}</option>`).join('')}</select></label>`:''}
+    ${!wave?`<label>难度<select id="pl-stage">${ev.stages.map((s,i)=>`<option value="${i}" ${i===sel.stage?'selected':''}>${e(s.group&&s.group!=='main'&&s.group!=='wave'?s.group+' · ':'')}${s.difficulty!=null?'Lv.'+s.difficulty+' ':''}${e(s.difficultyName)}${s.enemies?.filter(x=>x.label).length===1?' · '+e(s.enemies.find(x=>x.label).name||''):''}</option>`).join('')}</select></label>`:`<label>遭遇战难度<input id="pl-wave-difficulty" type="number" min="1" max="40" value="${P.waveSettings?.difficulty||40}" ${optWorker?'disabled':''}></label>`}
     ${!wave&&foes.length>1?`<label>目标敌人<select id="pl-enemy">${foes.map(x=>`<option value="${e(x.label)}" ${x.label===sel.enemy?'selected':''}>${e(x.name||x.label)}</option>`).join('')}</select></label>`:''}
     ${targetLine(ev,stage)}
   </div>`:''}
+  ${ev&&stage?enemyParametersHtml(ev,stage):''}
   <div class="pl-search-options">
     <label>队伍输出属性<select id="opt-element" ${optWorker?'disabled':''}>${TEAM_ELEMENTS.map(k=>`<option value="${k}" ${optOpt.teamElement===k?'selected':''}>${k?ELEM_LABEL[k]+'属性':'不限属性'}</option>`).join('')}</select></label>
     <label>候选数量<select id="opt-top" ${optWorker?'disabled':''}>${[5,10,20].map(k=>`<option value="${k}" ${optOpt.top===k?'selected':''}>最多 ${k} 个</option>`).join('')}</select></label>
+    <label>最低成功率（%）<input id="opt-min-success" type="number" min="0" max="100" step="1" value="${Math.round(optOpt.minSuccess*100)}" ${optWorker?'disabled':''}></label>
+    <label>成功判定<select id="opt-success-basis" ${optWorker?'disabled':''}><option value="onPlan" ${optOpt.minSuccessBasis==='onPlan'?'selected':''}>照轴完成（不续打）</option><option value="success" ${optOpt.minSuccessBasis==='success'?'selected':''}>通关（每阶段最多 2 回合续打）</option></select></label>
     <p class="subtle compact">按排轴中的主要技能伤害属性筛选，允许跨属性辅助；“无”指无属性技能输出。搜索不按 Healer 等职责标签分配队伍位置。</p>
   </div>
+  <p class="subtle compact">成功率下限 0 表示不限；下限立即筛选已有候选，重新搜索会按此要求挑选新方案。比例来自有限次数模拟，100% 不代表实战必过。</p>
   <div class="pl-go">
     <button id="opt-run" class="primary pl-run" type="button" ${optWorker||!ev?'disabled':''}>${optWorker?'正在求解…':'求最佳轴'}</button>
     ${optWorker&&optWorker!=='loading'?'<button id="opt-stop" type="button">停止</button>':''}
@@ -166,12 +185,24 @@ export function createPlannerUI(ctx){
     q('.pl-more').addEventListener('toggle',ev_=>{moreOpen=ev_.target.open;});
     if(q('#opt-run'))q('#opt-run').onclick=()=>runOptimize(host,ev,stage);
     if(q('#opt-stop'))q('#opt-stop').onclick=()=>{optWorker?.terminate();optWorker=null;optProgress=null;mount(host);};
-    const setOpt=(id,key,get=x=>x.checked)=>{const el=q(id);if(el)el.onchange=()=>{optOpt[key]=get(el);saveOpt();if(key==='scale'||key==='searchRules')mount(host);};};
+    const setOpt=(id,key,get=x=>x.checked)=>{const el=q(id);if(el)el.onchange=()=>{optOpt[key]=get(el);saveOpt();if(['scale','searchRules','minSuccess','minSuccessBasis'].includes(key))mount(host);};};
     setOpt('#opt-scale','scale',x=>x.value);setOpt('#opt-goal','goal',x=>x.value);
     setOpt('#opt-element','teamElement',x=>x.value);setOpt('#opt-top','top',x=>Number(x.value));
+    setOpt('#opt-min-success','minSuccess',x=>Math.max(0,Math.min(100,Number(x.value)||0))/100);
+    setOpt('#opt-success-basis','minSuccessBasis',x=>x.value);
     setOpt('#opt-fixed','fixedTeam');setOpt('#opt-rules','searchRules');setOpt('#opt-orbs','allOrbs');
     setOpt('#opt-cards','optimizeCards');setOpt('#opt-overkill','overkill');
-    if(optWorker)host.querySelectorAll('[data-pl-pick],#pl-kind,#pl-event,#pl-stage,#pl-enemy,[data-opt-use],#pl-edit,.pl-more input,.pl-more select,.pl-more button').forEach(el=>el.disabled=true);
+    if(q('#pl-wave-difficulty'))q('#pl-wave-difficulty').onchange=ev_=>{
+      const P=planner();P.waveSettings={difficulty:40,international:true,...P.waveSettings,difficulty:Math.max(1,Math.min(40,Math.round(Number(ev_.target.value))||40))};save();mount(host);
+    };
+    host.querySelectorAll('[data-enemy-param]').forEach(el=>el.onchange=()=>{
+      const P=planner(),group=`${ev.kind}:${ev.label}`,key=el.dataset.enemyParam,field=el.dataset.enemyField;
+      const value=el.value.trim();if(value!==''&&(!Number.isFinite(Number(value))||Number(value)<0||(field==='hp'&&Number(value)===0))){notice('DP/能力值须为非负数，HP 须大于 0。',true);return;}
+      P.enemyOverrides=P.enemyOverrides||{};const map=P.enemyOverrides[group]||(P.enemyOverrides[group]={}),custom=map[key]||(map[key]={});
+      if(value==='')delete custom[field];else custom[field]=Number(value);
+      if(!Object.keys(custom).length)delete map[key];save();mount(host);
+    });
+    if(optWorker)host.querySelectorAll('[data-pl-pick],#pl-kind,#pl-event,#pl-stage,#pl-enemy,[data-enemy-param],[data-opt-use],#pl-edit,.pl-more input,.pl-more select,.pl-more button').forEach(el=>el.disabled=true);
     host.querySelectorAll('[data-opt-use]').forEach(b=>b.onclick=()=>{adopt(Number(b.dataset.optUse),ev,stage);mount(host);});
     if(q('#pl-edit'))q('#pl-edit').onclick=()=>{moreOpen=true;q('.pl-more').open=true;q('#pl-designer')?.scrollIntoView({behavior:'smooth'});};
   }
@@ -196,7 +227,7 @@ export function createPlannerUI(ctx){
       view:(dview[k]=dview[k]||{phase:0,crit:opt.critMode,vary:'1.1'}),
       save:d=>{P.designs[k]=d;save();},
       wave:ev.kind==='wave'?{...P.waveSettings,rules:c.rules}:null,
-      setWave:patch=>{Object.assign(P.waveSettings,patch);env.wave={...env.wave,...patch};save();},notice};
+      setWave:patch=>{Object.assign(P.waveSettings,patch);env.wave={...env.wave,...patch};env.phases=phasesFor(ev,stage,c.rules);save();queueMicrotask(()=>mount(host));},notice};
     lastDesignEnv=env;
     try{renderDesigner(env);}catch(err){box.innerHTML=`<h2>排轴设计器</h2><p class="pill-error">设计器出错：${e(err.message)}</p>`;console.error(err);}
   }
@@ -205,7 +236,7 @@ export function createPlannerUI(ctx){
   // ---------------------------------------------------------------- 求最佳轴（配置优化：队伍 / 规则 / 技能 / 饰品 / 战术卡 + 排轴）
   let cachePool=null,optWorker=null,optProgress=null,optResult=null,optResultKey='';
   const OPT_SCALE=SEARCH_PRESETS;
-  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10};
+  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10,minSuccess:0,minSuccessBasis:'onPlan'};
   const GOALS={score:'最高分（通关均分）',stable:'最稳（成功率优先）',fast:'最少回合'};
   const optStepLabel={evaluate:'评估候选',evolve:'改进候选',final:'深排与少量随机模拟',incumbent:'复评已有方案'};
   const optProgressText=x=>`${optStepLabel[x.step]||x.step}${x.total>0?` ${Math.max(0,Math.min(x.total,x.done))}/${x.total}${x.step==='evolve'?' 次评估':''}`:''} · ${x.label} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
@@ -242,10 +273,17 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
     const design=P.designs?.[k];
     const hasAxis=design?.phases?.some(p=>p.turns?.some(t=>t.actions?.some(a=>a.s)||t.odStart||t.odEnd));
     if(!hasAxis&&!R)return `<div class="pl-empty"><h2>还没有这一期的轴</h2><p class="subtle">点上面的「求最佳轴」。会自动读取本机游戏缓存（只读）里的已持有卡面、饰品和当前编队。</p></div>`;
-    const maxScore=R?.top?.length?Math.max(...R.top.map(t=>successfulScores(t.mc).mean??0)):0;
+    let contextKey=null;try{contextKey=enemyContextKey(phasesFor(ev,stage,[]),contextOptions(ev));}catch{}
+    const activeRules=ev.kind==='scoreAttack'||ev.kind==='wave'?sel.rules:(stage.rules||[]).map(r=>r.id);
+    const resultStale=R&&!resultMatchesEnemies(R,contextKey),summaryStale=summary&&(!resultMatchesEnemies(summary,contextKey)||!sameRuleIds(summary.ruleIds,activeRules));
+    const rows=resultStale?[]:visibleCandidates(R,optOpt),basisName=optOpt.minSuccessBasis==='success'?'通关率（含续打）':'照轴完成率';
+    const maxScore=rows.length?Math.max(...rows.map(({candidate:t})=>successfulScores(t.mc).mean??0)):0;
     const legacyScores=wave&&R?.top?.some(t=>successfulScores(t.mc).converted);
-    const chips=R?.top?.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${R.top.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
-    <div class="pl-plans">${R.top.map((t,i)=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
+    const thresholdNote=R&&optOpt.minSuccess>0?`<p class="subtle compact">按${basisName} ≥ ${pct(optOpt.minSuccess)} 筛选，当前保留 ${rows.length} 个候选${R.rejectedBySuccess?`；搜索结束时另有 ${R.rejectedBySuccess} 条轴未达到当时下限`:''}。${rows.length?'':'可降低下限或提高搜索投入后重新搜索。'}</p>`:'';
+    const currentBelow=!summaryStale&&summary&&optOpt.minSuccess>0&&!(satisfiesThreshold(summary,optOpt))?`<p class="pill-error">当前采用方案低于所选成功率下限。可从合格候选中重新选择，或重新搜索。</p>`:'';
+    const staleNote=resultStale||summaryStale?'<p class="pill-error">敌方参数、计分设置、规则或战斗模型已更新，旧均分和成功率暂不作为有效结果。旧轴保留供查看；请重新搜索，以当前模型复评。</p>':'';
+    const chips=rows.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${rows.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
+    <div class="pl-plans">${rows.map(({candidate:t,index:i})=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
       <b>候选 ${i+1}${i===selected?' · 已采用':''}</b>${t.newTeam?'<span class="tag">新队伍</span>':''}<span>按轴 ${pct(t.mc.onPlan)} · 通关 ${pct(t.mc.success)}</span><span>失败 ${sc.successes==null||t.mc.n==null?'—':t.mc.n-sc.successes}/${t.mc.n??'?'} 次</span>${wave?`<span>${sc.mean!=null?`通关均分 ${n(Math.round(sc.mean))} · ${sc.samples??'?'} 个成功样本${gap>=0.5?` · 距最高 ${n(Math.round(gap))}`:''}`:'暂无通关分数'}</span>`:''}<span>${t.mc.turnsMedian??t.turns} 回合${t.teamElement?` · ${ELEM_LABEL[t.teamElement]||t.teamElement} ${pct(t.elementShare)}`:''}</span></button>`;}).join('')}</div>${legacyScores?'<p class="subtle compact">旧均分已剔除失败的零分；重新搜索会用新样本复评已有轴并更新排序。</p>':''}`:'';
     let axis='',sum=null;
     if(hasAxis){
@@ -261,9 +299,9 @@ ${wave&&s.cardNames?.some(Boolean)?`<p class="compact">${s.cardNames.map((c,p)=>
 <p class="compact">${m.skillsChanged?'<span class="tag">技能需调整</span> ':''}技能：${e(m.skills.join('、'))} <small class="subtle">（${m.skills.length}/${m.cap??'?'} 格）</small></p>
 ${m.changes?.length?`<p class="compact">饰品改动：${e(m.changes.join('、'))}</p>`:''}
 ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p class="subtle compact">当前计算参数：${e(equipText(P.members[i]||{}))}</p></article>`).join('')}</div></details>`:'';
-    const stats=summary?`<div class="pl-best-stats">
+    const stats=summary&&!summaryStale?`<div class="pl-best-stats">
       <div><strong>${pct(s.onPlan)}</strong><span>模拟按轴完成${s.samples?' · '+s.samples+' 次':''}</span></div>
-      <div><strong>${pct(s.success)}</strong><span>通关（含最多 2 回合续打）</span></div>
+      <div><strong>${pct(s.success)}</strong><span>通关（每阶段最多 2 回合续打）</span></div>
       ${s.samples&&scores.successes!=null?`<div><strong>${s.samples-scores.successes}/${s.samples}</strong><span>失败次数（不计入均分）</span></div>`:''}
       ${wave?`<div><strong>${scores.mean!=null?n(Math.round(scores.mean)):'—'}</strong><span>通关均分 · ${scores.samples??'?'} 个成功样本</span></div>`:''}
       ${wave&&scores.p10!=null?`<div><strong>${n(Math.round(scores.p10))}</strong><span>通关分数第 10 百分位</span></div>`:''}
@@ -272,15 +310,20 @@ ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p clas
     </div>`:sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
     return `<div class="split-heading"><h2 title="${e(s.label||'')}">当前方案${summary?` <small class="subtle">${s.newTeam?'新组的队伍 · ':''}${s.at?new Date(s.at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 求出':''}</small>`:''}</h2>
   ${hasAxis?'<button id="pl-edit" class="quiet" type="button">逐回合修改</button>':''}</div>
-${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
+${staleNote}${thresholdNote}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
 <div class="pl-axis">${axis}</div>
 ${loadout}
 ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.screened??R.evaluated}），${R.threads??1} 个线程，用时 ${(R.elapsed/1000).toFixed(0)} 秒${(R.errorCount||R.errors?.length)?`；${R.errorCount||R.errors.length} 个候选出错`:''}。启发式搜索不保证全局最优；分数和成功率来自有限样本的社区公式模拟，小分差可能是抽样波动，不是游戏实测。</p>`:''}`;
   }
 
-  function bestSummary(t){
+  function satisfiesThreshold(summary,settings){
+    const rate=summary[settings.minSuccessBasis];
+    return Number.isFinite(rate)&&rate>=settings.minSuccess;
+  }
+
+  function bestSummary(t,result){
     const sc=successfulScores(t.mc);
-    return {label:t.label,newTeam:!!t.newTeam,team:t.team,ruleNames:t.ruleNames||null,success:t.mc.success,onPlan:t.mc.onPlan,scoreMean:sc.mean,scoreP10:sc.p10,scoreBasis:'successful',scoreSamples:sc.samples,successes:sc.successes,samples:t.mc.n,teamElement:t.teamElement,elementShare:t.elementShare,
+    return {label:t.label,newTeam:!!t.newTeam,team:t.team,ruleIds:t.ruleIds||[],ruleNames:t.ruleNames||null,battleVersion:result?.battleVersion,enemyContextKey:result?.enemyContextKey,success:t.mc.success,onPlan:t.mc.onPlan,scoreMean:sc.mean,scoreP10:sc.p10,scoreBasis:'successful',scoreSamples:sc.samples,successes:sc.successes,samples:t.mc.n,teamElement:t.teamElement,elementShare:t.elementShare,
       turnsMedian:t.mc.turnsMedian,turns:t.turns,loadout:t.loadout||[],cardNames:(t.cards||[]).map(c=>c?cardById(c)?.name||c:null),at:Date.now()};
   }
   /** 采用第 i 个方案：研究室的配队、该期排轴、特殊规则都换成它（游戏本身不会被修改）。 */
@@ -291,7 +334,7 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     if(Array.isArray(t.ruleIds))sel.rules=t.ruleIds.slice();
     const k=designKey(ev,stage);
     P.designs=P.designs||{};P.designs[k]=structuredClone(t.design);
-    P.best=P.best||{};P.best[k]=bestSummary(t);
+    P.best=P.best||{};P.best[k]=bestSummary(t,R);
     bestIdx=i;R.selected=i;if(P.lastOptimization?.targetKey===k)P.lastOptimization.selected=i;persist();saveSel();
   }
   async function ensureCache(){
@@ -330,6 +373,7 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
       target:{kind:ev.kind,ev:{elements:ev.elements||[]},rules:c.rules,phases:c.phases,cards:d.phases.map(p=>p.card||null),difficulty:ws.difficulty,international:ws.international,ruleOptions,ruleIndex},
       opts:{...optOpt,...OPT_SCALE[optOpt.scale],goal:goalFor(ev),overkill:ws.overkill!==false&&optOpt.overkill}};
     input.opts.scopeKey=optimizationScope(k,input);
+    input.opts.battleVersion=BATTLE_MODEL_VERSION;input.opts.enemyContextKey=enemyContextKey(c.phases,contextOptions(ev));
     input.incumbents=reusableCandidates(resultsFor(k),k,input.opts.scopeKey,{members:P.members,design:d,ruleIds:c.rules.map(r=>r.id),label:'当前已有轴'});
     optResult=null;optResultKey=k;optProgress={step:'evaluate',done:-1,total:0,label:'准备',elapsed:0};
     const w=new Worker('/sim/optimizer-worker.mjs',{type:'module'});optWorker=w;
@@ -337,11 +381,12 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
       if(x.stage==='progress'){optProgress=x;const el=host.querySelector('#opt-progress');if(el)el.textContent=optProgressText(x);}
       else{
         w.terminate();optWorker=null;optProgress=null;
-        if(x.stage==='done'){optResult={...x.result,targetKey:k,scopeKey:input.opts.scopeKey,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
-          if(optResult?.top?.length){const current=planner();current.lastOptimization=packOptimizationResult(k,optResult,input.opts);
+        if(x.stage==='done'){optResult={...x.result,targetKey:k,scopeKey:input.opts.scopeKey,battleVersion:input.opts.battleVersion,enemyContextKey:input.opts.enemyContextKey,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
+          const current=planner();current.lastOptimization=packOptimizationResult(k,optResult,input.opts);
+          if(optResult?.top?.length){
             if(current===P&&JSON.stringify(current.members)===originalMembers){adopt(0,ev,stage);notice(`本次找到 ${optResult.top.length} 个候选，已采用第 1 个，模拟成功率 ${pct(optResult.top[0].mc.success)}。可点击其他候选比较。`);}
             else{optResult.selected=-1;current.lastOptimization.selected=-1;save();notice(`本次找到 ${optResult.top.length} 个候选。求解期间档案或配队有更新，已保留你的改动；点击候选后采用。`);}}
-          else notice(`本次没有找到${input.opts.teamElement?ELEM_LABEL[input.opts.teamElement]+'属性的':''}合适方案。可提高搜索投入或调整配队；搜索无结果不代表不存在。`,true);}
+          else{save();notice(`本次没有找到${input.opts.teamElement?ELEM_LABEL[input.opts.teamElement]+'属性的':''}合适方案${input.opts.minSuccess>0?`（${input.opts.minSuccessBasis==='onPlan'?'照轴完成率':'含续打通关率'}至少 ${pct(input.opts.minSuccess)}）`:''}。可降低成功率下限、提高搜索投入或调整配队；搜索无结果不代表不存在。`,true);}}
         else notice('求解失败：'+x.message,true);
         mount(host);}
     };
@@ -356,7 +401,8 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     if(!foe)return '<p class="subtle">这一档没有敌人数据。</p>';
     const d=ev.enemies?.[foe.label];
     const res=d?.resist?.element?Object.entries(d.resist.element).filter(([k,v])=>typeof v==='number'&&v!==0).map(([k,v])=>`${k} ${100-v}%`).join(' · '):'';
-    return `<p class="compact">${e(foe.name||foe.label)} · DP ${n(foe.dp)} · HP ${n(foe.hp)} · 基准 ${foe.paramBorder} · 破坏系数 ${foe.destruction?.[0]??'—'} 上限 ${foe.destruction?.[1]??'—'}%${res?` · 弱点/抗性 ${e(res)}`:''}${stage.damageCap?` · 伤害上限 ${n(stage.damageCap)}`:''}</p>`;
+    let actual;try{actual=phasesFor(ev,stage,[])[0].enemies[0];}catch(err){return `<p class="pill-error">${e(err.message)}</p>`;}
+    return `<p class="compact">${e(actual.name||actual.label)} · DP ${n(actual.maxDp)} · HP ${n(actual.maxHp)} · 基准 ${actual.border} · 破坏系数 ${foe.destruction?.[0]??'—'} 上限 ${foe.destruction?.[1]??'—'}%${res?` · 弱点/抗性 ${e(res)}`:''}${stage.damageCap?` · 伤害上限 ${n(stage.damageCap)}`:''}</p>`;
   }
   function deckPicker(){
     if(decks.error)return `<p class="pill-error">${e(decks.error)}</p>`;
@@ -409,12 +455,12 @@ ${STATS.map(k=>`<td><input class="stat-input" type="number" min="0" max="99999" 
 
   // ---------------------------------------------------------------- 伤害计算器
   /** 设计器 / 优化器的阶段：遭遇战 = 全部阶段、每阶段全部敌人；其他 = 当前关卡的目标敌人。rules 不同敌人数据不同（规则效果挂在敌人上）。 */
-  function phasesFor(ev,stage,rules,enemy=null){
-    // 遭遇战 #08 难度 40 的实际敌方能力值：5 个阶段都是 775（用户游戏内确认；主数据基准 750）
-    const ws=planner().waveSettings||{},borderAt=(i,b)=>Number(ws.difficulty||40)===40&&ev.label==='WaveBattle0008'?775:b;
-    if(ev.kind==='wave')return ev.stages.map((s,si)=>({name:(s.enemies||[]).map(x=>x.name).filter((v,i,a)=>a.indexOf(v)===i).join('、'),enemies:(s.enemies||[]).filter(x=>x.label).map(x=>{const en=buildEnemy(ev,s,{enemyLabel:x.label,rules});return {...en,border:borderAt(si,en.border)};})}));
-    const en=enemy||buildEnemy(ev,stage,{enemyLabel:sel.enemy,rules});
-    return [{name:en.name,enemies:[en]}];
+  function phasesFor(ev,stage,rules){
+    const P=planner();return plannerPhases(ev,stage,{rules,enemyLabel:sel.enemy,waveSettings:P.waveSettings,overrides:P.enemyOverrides?.[`${ev.kind}:${ev.label}`]});
+  }
+  function contextOptions(ev){
+    const ws=planner().waveSettings||{};
+    return {wave:ev.kind==='wave'?{...ws,overkill:ws.overkill!==false&&optOpt.overkill}:null};
   }
   /** 规则组合含不选与少选：倍率更高也可能因战斗代价降低总分。 */
   function ruleCombos(ev){
@@ -428,9 +474,10 @@ ${STATS.map(k=>`<td><input class="stat-input" type="number" min="0" max="99999" 
       members.forEach((m,i)=>{if(!m.vitals?.dp){const raw=P.members[i]?.raw;if(raw&&statsData){const r=computePanel(raw,{stats:statsData,equipment,catalog});if(r.final)m.vitals={dp:Math.round(r.final.dp),hp:Math.round(r.final.hp)};}}});
       const party=buildParty(members,{skills,catalog,stats:statsData});
       const rules=ev.kind==='scoreAttack'||ev.kind==='wave'?ev.rules.filter(r=>sel.rules.includes(r.id)):[...(stage.rules||[])];
-      const enemy=buildEnemy(ev,stage,{enemyLabel:sel.enemy,rules});
       // 设计器的阶段：遭遇战 = 全部阶段、每阶段全部敌人；其他 = 当前关卡的目标敌人
-      const phases=phasesFor(ev,stage,rules,enemy);
+      const phases=phasesFor(ev,stage,rules);
+      const list=phases[ev.kind==='wave'?sel.stage:0].enemies;
+      const enemy=list.find(x=>x.label===sel.enemy)||list.find(x=>ev.enemies?.[x.label]?.flags?.is_boss)||list[0];
       return {party,enemy,phases,rules};
     }catch(err){return {error:err.message};}
   }

@@ -8,6 +8,12 @@ export function normalizeTeamElement(value){
   return el;
 }
 export const resultLimit=value=>Math.max(1,Math.min(20,Math.trunc(Number(value)||10)));
+/** Minimum simulated rate; the separately selected basis defines what counts. */
+export function normalizeMinSuccess(value){
+  const n=Number(value);
+  return Number.isFinite(n)?Math.max(0,Math.min(1,n)):0;
+}
+export const normalizeSuccessBasis=value=>value==='success'?'success':'onPlan';
 
 // Budget describes completed work, not wall-clock time. A slow machine or a
 // busy Worker must not silently explore a different set of candidates.

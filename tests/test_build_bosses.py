@@ -33,6 +33,49 @@ ZH = {'enemy': {'name': {'Boss_a': '頭目'}}, 'skill': {'name': {'Boss_Attack':
 
 
 class BuildBossesTest(unittest.TestCase):
+    def test_wave_battle_difficulty_suffix_keeps_phase_and_separate_templates(self):
+        self.assertEqual(bb.parse_wave_battle_label('WaveBattle06_HARD_05_40'), ('HARD', 5, 40))
+        self.assertEqual(bb.parse_wave_battle_label('Battle.WaveBattle06_HARD_05'), ('HARD', 5, None))
+        self.assertIsNone(bb.parse_wave_battle_label('WaveBattle06_HARD_40'))
+        self.assertIsNone(bb.parse_wave_battle_label('other_05_40'))
+        def enemy(label, *battles):
+            return {'label': label, 'battles': [{'label': b} for b in battles]}
+        details = [enemy('ordinary', 'WaveBattle06_HARD_05'),
+                   enemy('level39', 'WaveBattle06_HARD_05_39'),
+                   enemy('level40', 'WaveBattle06_HARD_05_40', 'WaveBattle06_HARD_05_40'),
+                   enemy('phase1', 'WaveBattle06_HARD_01')]
+        selected = bb.select_wave_groups(details)
+        self.assertEqual([s['phase'] for s in selected], [1, 5])
+        self.assertEqual(selected[-1]['sourceDifficulty'], 40)
+        self.assertEqual([e['label'] for e in selected[-1]['enemies']], ['level40'])
+        self.assertEqual(bb.select_wave_groups(details, 39)[-1]['enemies'][0]['label'], 'level39')
+        self.assertEqual(bb.select_wave_groups(details[:2])[-1]['enemies'][0]['label'], 'ordinary')
+        self.assertEqual(bb.select_wave_groups(details[1:2])[-1]['sourceDifficulty'], 39)
+
+    def test_wave_suffix_phase_is_included_in_offline_catalog(self):
+        with tempfile.TemporaryDirectory() as d:
+            raw, out = Path(d) / 'raw', Path(d) / 'out'
+            (raw / 'enemies').mkdir(parents=True)
+            for table in ('score_attack', 'dimension_battle'):
+                (raw / f'{table}.json').write_text('[]', encoding='utf-8')
+            (raw / 'wave_battle.json').write_text(json.dumps([{'id': 6, 'label': 'WaveBattle0006', 'name': '#6'}]), encoding='utf-8')
+            enemies = []
+            for suffix in ('39', '40'):
+                enemy = dict(ENEMY, label=f'waveBattle_06_Hard_Test_{suffix}',
+                             battles=[{'label': f'WaveBattle06_HARD_05_{suffix}'}])
+                enemies.append(enemy)
+                (raw / 'enemies' / f'{enemy["label"]}.json').write_text(json.dumps(enemy), encoding='utf-8')
+            (raw / 'enemies.json').write_text(json.dumps(enemies), encoding='utf-8')
+            self.assertEqual(bb.main(['--raw-dir', str(raw), '--out', str(out), '--offline', '--zh', str(raw / 'none.json')]), 0)
+            event = json.loads((out / 'wave' / 'WaveBattle0006.json').read_text(encoding='utf-8'))
+            self.assertEqual(len(event['stages']), 1)
+            stage = event['stages'][0]
+            self.assertEqual((stage['phase'], stage['sourceDifficulty']), (5, 40))
+            self.assertEqual(stage['battleLabel'], 'WaveBattle06_HARD_05_40')
+            self.assertEqual([e['label'] for e in stage['enemies']], ['waveBattle_06_Hard_Test_40'])
+            self.assertEqual(stage['enemies'][0]['dp'], ENEMY['base_param']['dp'])
+            self.assertEqual(list(event['enemies']), ['waveBattle_06_Hard_Test_40'])
+
     def test_normalisers(self):
         with tempfile.TemporaryDirectory() as d:
             zp = Path(d) / 'zh.json'

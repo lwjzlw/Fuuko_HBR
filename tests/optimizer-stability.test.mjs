@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {optimizerInput} from './fixtures/optimizer-input.mjs';
 import {optimize,createTaskHandler} from '../public/sim/optimizer.mjs';
-import {SEARCH_PRESETS,searchBudget} from '../public/sim/optimizer-options.mjs';
+import {SEARCH_PRESETS,searchBudget,normalizeMinSuccess,normalizeSuccessBasis} from '../public/sim/optimizer-options.mjs';
 import {membersFromDeck} from '../public/sim/hbr/deck.mjs';
 
 const signature=r=>r.top.map(x=>({members:x.members,design:x.design,mc:x.mc,ruleIds:x.ruleIds}));
@@ -126,4 +126,56 @@ test('historical support and equipment values are rebuilt while explicit manual 
   assert.equal(result.r.members[0].stats.dex,777);
   assert.equal(result.r.members[0].initialSp,expected.initialSp);
   assert.equal(result.r.members[0].equipment.normalAttackUp,expected.equipment.normalAttackUp);
+});
+
+test('success thresholds and their basis have explicit bounded defaults',()=>{
+  for(const value of [undefined,null,'',NaN,Infinity,-Infinity,'invalid',-0.5])assert.equal(normalizeMinSuccess(value),0);
+  assert.equal(normalizeMinSuccess('0.8'),0.8);assert.equal(normalizeMinSuccess(1),1);assert.equal(normalizeMinSuccess(1.5),1);
+  for(const value of [undefined,'invalid','onPlan'])assert.equal(normalizeSuccessBasis(value),'onPlan');
+  assert.equal(normalizeSuccessBasis('success'),'success');
+});
+
+function successThresholdFixture(){
+  const input=optimizerInput({count:12,opts:{mcRuns:24,maxTurns:5,top:20,finalists:20}});
+  for(let i=0;i<12;i++){
+    const s=input.data.skills.styles['S'+i];
+    s.skills[0].sp=2+i%4;s.skills[0].hitCount=1+i%3;
+    s.skills[0].parts[0].power=[750+((i*7)%13)*200,750+((i*7)%13)*200];
+    s.skills[1].sp=2+i%3;s.skills[1].parts[0].power=[0.2+(i%5)*0.15,0];
+  }
+  const enemy=input.target.phases[0].enemies[0];enemy.hp=enemy.maxHp=18000;
+  const pattern={entries:[{order:1,skills:[900]}]};enemy.pattern={dp:pattern,hp:pattern};
+  enemy.skills=[{id:900,label:'SyntheticDanger',name:'Synthetic enemy attack',parts:[{skillType:'AttackSkill',targetType:'Single',power:[2500,2500],parameters:{con:1},diffForMax:0}]}];
+  input.target.phases.push(structuredClone(input.target.phases[0]));input.target.cards=[null,'critRate100'];
+  return input;
+}
+
+test('100% rate filters all rerated routes before top-N and distinguishes on-plan from extended clears',async()=>{
+  const input=successThresholdFixture(),unfiltered=await optimize(structuredClone(input));
+  assert.deepEqual(unfiltered.errors,[]);assert.equal(unfiltered.minSuccess,0);assert.equal(unfiltered.minSuccessBasis,'onPlan');
+  assert.equal(unfiltered.rejectedBySuccess,0);assert.equal(unfiltered.resultCandidates,unfiltered.top.length);
+  assert.ok(unfiltered.top[0].mc.success<1,'fixture exposes a high-score route below the success threshold');
+  const clears=unfiltered.top.filter(t=>t.mc.success===1),onPlan=unfiltered.top.filter(t=>t.mc.onPlan===1);
+  assert.ok(clears.length>onPlan.length&&onPlan.length>=3,'fixture includes 100% clears that sometimes need continuation');
+  const prior=unfiltered.top[0];input.incumbents=[{members:prior.members,design:prior.design,ruleIds:prior.ruleIds}];
+  input.opts={...input.opts,top:3,minSuccess:1,minSuccessBasis:'success'};
+  const filtered=await optimize(structuredClone(input));
+  assert.equal(filtered.incumbents,1,'a low-rate incumbent is reevaluated before filtering');
+  assert.equal(filtered.minSuccessBasis,'success');assert.equal(filtered.minSuccess,1);
+  assert.equal(filtered.qualifiedCandidates,clears.length);assert.equal(filtered.rejectedBySuccess,unfiltered.top.length-clears.length);
+  assert.deepEqual(signature(filtered),signature({top:clears.slice(0,3)}),'low-rate high scores cannot occupy top-N slots');
+  input.opts={...input.opts,top:20,minSuccessBasis:'onPlan'};
+  const strict=await optimize(input);
+  assert.equal(strict.qualifiedCandidates,onPlan.length);assert.equal(strict.rejectedBySuccess,unfiltered.top.length-onPlan.length);
+  assert.deepEqual(signature(strict),signature({top:onPlan}),'the threshold never changes conditional score statistics');
+});
+
+test('an unmet success threshold returns an empty result with searched and rejected counts',async()=>{
+  const input=optimizerInput({count:6,opts:{minSuccess:0.01,mcRuns:4}});
+  Object.assign(input.target.phases[0].enemies[0],{hp:1e9,maxHp:1e9});
+  const result=await optimize(input);
+  assert.deepEqual(result.errors,[]);assert.deepEqual(result.top,[]);
+  assert.equal(result.minSuccess,0.01);assert.equal(result.minSuccessBasis,'onPlan');assert.equal(result.qualifiedCandidates,0);
+  assert.ok(result.resultCandidates>0);assert.equal(result.rejectedBySuccess,result.resultCandidates);
+  assert.ok(result.screened>0);assert.ok(result.evaluated>0);assert.equal(result.iterations,0);
 });

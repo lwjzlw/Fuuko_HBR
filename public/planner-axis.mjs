@@ -3,6 +3,14 @@ import {simulateDesign} from './sim/designer.mjs';
 
 const roundLabel=r=>r==='extra'?'追加回合':/^od\d+$/.test(r)?'OD '+r.slice(2):'普通回合';
 
+/** State the replay assumptions beside its events, rather than implying a guaranteed outcome. */
+export function replayAssumptions(critMode='expected'){
+  if(critMode==='none')return '不暴击、伤害浮动取中值的预测；破盾/击杀不是最低伤害保证。';
+  if(critMode==='all')return '全暴击、伤害浮动取中值的预测；破盾/击杀以全暴击为前提，不代表实际必定暴击。';
+  if(critMode==='random')return '一次随机样本回放；破盾/击杀仅对应本次样本。';
+  return '按暴击概率加权的平均伤害预测；破盾/击杀不保证每次发生。';
+}
+
 export function groupAxisRows(rows){
   const out=[],byId=new Map();let pending=[];
   for(const r of rows){
@@ -45,14 +53,15 @@ export function renderAxisRows(rounds,{e,n,party}){
       const stopped=r.events.some(v=>v.kind==='kill')&&r.actions.at(-1)?.enemy?.hp<=0;
       return `<li class="axis-row axis-${r.round==='extra'?'extra':r.round==='main'?'main':'inod'}" data-round="${e(r.round)}">
 <div class="axis-t"><b>T${r.turn}</b><span>${e(roundLabel(r.round))}${ci?'（续）':''}</span>${r.parentRound?`<small>${e(roundLabel(r.parentRound))} 内</small>`:''}</div>
-<div class="axis-body"><div class="axis-action-flow">${ci===0?(r.before||[]).map(odAction).join(''):''}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${e(a.skill||'未安排行动')}</span><small>${a.executed?`伤害 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
+<div class="axis-body"><div class="axis-action-flow">${ci===0?(r.before||[]).map(odAction).join(''):''}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${e(a.skill||'未安排行动')}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
 ${events.length?`<div class="axis-events">${events.map(v=>`<span class="axis-event axis-${v.kind}">${v.unit!=null?e(name(v.unit))+' · ':''}${e(v.label)}</span>`).join('')}</div>`:''}</div></li>`;
     });
   }).join('')}</ol>`;
 }
 
 export function axisView({e,n,party,phases,statusTypes,design,critMode='expected',simulationOptions={enemyVariance:1.1,enemyTargeting:'worst'}}){
-  const res=simulateDesign({party,phases,statusTypes},{critMode,...simulationOptions,trace:true},design);
+  const options={critMode,...simulationOptions,trace:true};
+  const res=simulateDesign({party,phases,statusTypes},options,design);
   const rounds=groupAxisRows(res.rows),multi=phases.length>1;
   const html=phases.map((phase,p)=>{
     const rs=rounds.filter(r=>r.phase===p),cards=res.rows.filter(r=>r.phase===p&&r.kind==='card'),out=res.phases.find(x=>x.phase===p);
@@ -61,6 +70,6 @@ export function axisView({e,n,party,phases,statusTypes,design,critMode='expected
 ${cards.length?`<p class="axis-card">${cards.map(c=>e(c.label)).join('　')}</p>`:''}${renderAxisRows(rs,{e,n,party})}</div>`;
   }).join('');
   const errors=res.issues.filter(x=>x.level!=='warn');
-  return {html:html+(errors.length?`<details class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:''),
+  return {html:`<p class="subtle compact axis-assumptions">${e(replayAssumptions(options.critMode))} 每次行动显示所有目标实际扣除 DP / HP 的合计，不是单个敌人的伤害跳字。</p>`+html+(errors.length?`<details class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:''),
     summary:{turns:res.turns,cleared:res.phases.filter(x=>x.cleared).length,phases:phases.length,failed:!!res.failed,damage:res.phases.reduce((a,x)=>a+(x.damage||0),0)}};
 }

@@ -1,5 +1,6 @@
 // Persistent, bounded result snapshots. Only the latest search batch is retained;
 // adopted teams and axes remain in the archive's existing per-event records.
+import {normalizeMinSuccess,normalizeSuccessBasis} from './sim/optimizer-options.mjs';
 export const TEAM_ELEMENTS = ['', 'ice', 'fire', 'thunder', 'light', 'dark', 'nonelemental'];
 
 export function normalizeResultSettings(settings = {}) {
@@ -7,6 +8,8 @@ export function normalizeResultSettings(settings = {}) {
   return {
     teamElement: TEAM_ELEMENTS.includes(settings.teamElement) ? settings.teamElement : '',
     top: [5, 10, 20].includes(count) ? count : 10,
+    minSuccess: normalizeMinSuccess(settings.minSuccess),
+    minSuccessBasis: normalizeSuccessBasis(settings.minSuccessBasis),
   };
 }
 
@@ -25,12 +28,22 @@ export function packOptimizationResult(targetKey, result, settings, selected = 0
   return structuredClone({
     targetKey, at: Date.now(), selected: Math.max(0, Math.min(selected, top.length - 1)),
     teamElement: normalized.teamElement, requested: normalized.top,
+    minSuccess: normalized.minSuccess, minSuccessBasis: normalized.minSuccessBasis,
+    battleVersion: settings.battleVersion||null, enemyContextKey: settings.enemyContextKey||null,
+    rejectedBySuccess: result.rejectedBySuccess, qualifiedCandidates: result.qualifiedCandidates, resultCandidates: result.resultCandidates,
     goal: result.goal || settings.goal || 'score', elapsed: result.elapsed,
     evaluated: result.evaluated, screened: result.screened, threads: result.threads,
     scopeKey: settings.scopeKey || null, searchVersion: result.searchVersion || null,
     iterations: result.iterations, searchBudget: result.searchBudget, incumbents: result.incumbents,
     errorCount: result.errors?.length || 0, top,
   });
+}
+
+/** Keep the original indices so filtering never adopts a different saved axis. */
+export function visibleCandidates(result,settings={}){
+  const {minSuccess,minSuccessBasis}=normalizeResultSettings(settings);
+  return (result?.top||[]).map((candidate,index)=>({candidate,index})).filter(({candidate})=>
+    minSuccess===0||(Number.isFinite(candidate.mc?.[minSuccessBasis])&&candidate.mc[minSuccessBasis]>=minSuccess));
 }
 
 /** Old means included zero-score failures. Recover the successful mean only;

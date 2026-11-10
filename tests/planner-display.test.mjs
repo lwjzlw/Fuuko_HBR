@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {optimizerInput} from './fixtures/optimizer-input.mjs';
 import {buildParty} from '../public/sim/hbr/battle.mjs';
-import {simulateDesign} from '../public/sim/designer.mjs';
+import {simulateDesign,monteCarlo} from '../public/sim/designer.mjs';
 import {groupAxisRows,renderAxisRows,axisView} from '../public/planner-axis.mjs';
 import {equipmentDetails,supportDetails,loadoutDetailsHtml} from '../public/planner-loadout.mjs';
+import {renderDesigner} from '../public/designer-ui.mjs';
 
 const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=String;
@@ -56,6 +57,43 @@ test('break and kill stay on the triggering round and later actions are visibly 
   const html=axisView({e,n,...ctx,design}).html;
   assert.match(html,/破盾/);assert.match(html,/击杀/);
   assert.equal((html.match(/未执行（已击杀）/g)||[]).length,1);
+});
+
+test('AoE shield breaks name the secondary enemy while the primary shield remains intact',()=>{
+  const f=optimizerInput({count:6}),skill=f.data.skills.styles.S0.skills[0];
+  skill.hitCount=1;skill.parts[0].targetType='All';
+  const party=buildParty(f.base,f.data),enemy=f.target.phases[0].enemies[0];
+  const primary={...enemy,name:'主敌',dp:[1e7],maxDp:1e7,hp:1e7,maxHp:1e7};
+  const secondary={...enemy,name:'旁敌',dp:[1],maxDp:1,hp:1e7,maxHp:1e7};
+  const ctx={party,phases:[{enemies:[primary,secondary]}],statusTypes:{}};
+  const design={phases:[{turns:[{actions:[{u:0,s:'Skill0'}]}]}]};
+  const replay=simulateDesign(ctx,{critMode:'none'},design),view=axisView({e,n,...ctx,design,critMode:'none'});
+  assert.ok(replay.final.enemy.dp>0,'the focused primary enemy still has its shield');
+  assert.deepEqual(replay.rows.filter(r=>r.kind==='break').map(r=>r.label),['破盾 旁敌']);
+  assert.match(view.html,/破盾 旁敌/);assert.doesNotMatch(view.html,/破盾 主敌/);
+});
+
+test('expected first-turn kills are labeled as predictions and differ from noncritical replay',()=>{
+  const f=optimizerInput({count:6});f.data.skills.styles.S0.skills[0].hitCount=1;
+  const party=buildParty(f.base,f.data),enemy={...f.target.phases[0].enemies[0],hp:1225,maxHp:1225,dp:[],maxDp:0};
+  const ctx={party,phases:[{enemies:[enemy]}],statusTypes:{}},design={phases:[{turns:[{actions:[{u:0,s:'Skill0'}]}]}]};
+  const expected=axisView({e,n,...ctx,design}),none=axisView({e,n,...ctx,design,critMode:'none'});
+  assert.equal(expected.summary.cleared,1);assert.equal(none.summary.cleared,0);
+  assert.match(expected.html,/平均伤害预测/);assert.match(expected.html,/不保证每次发生/);assert.match(expected.html,/axis-kill/);
+  assert.match(none.html,/不暴击、伤害浮动取中值/);assert.doesNotMatch(none.html,/axis-kill/);
+  const original=monteCarlo(ctx,{extendTurns:0},design,{n:200,seed:7}),extended=monteCarlo(ctx,{},design,{n:200,seed:7});
+  assert.ok(original.onPlan>0&&original.onPlan<1,'an expected kill must not be mistaken for guaranteed success');
+  assert.equal(extended.onPlan,original.onPlan);assert.ok(extended.success>original.success,'continued turns are distinct from the displayed first turn');
+  const override=axisView({e,n,...ctx,design,critMode:'expected',simulationOptions:{critMode:'none'}});
+  assert.match(override.html,/不暴击、伤害浮动取中值/);assert.equal(override.summary.cleared,0);
+});
+
+test('designer replay explains each selected critical mode beside its result',()=>{
+  const ctx=battle(),host={innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null};
+  const env={e,n,host,...ctx,opt:{},design:{phases:[{turns:[{actions:actions()}]}]},view:{phase:0,crit:'expected',vary:1.1},save:()=>{}};
+  renderDesigner(env);assert.match(host.innerHTML,/平均伤害预测/);
+  env.view.crit='none';renderDesigner(env);assert.match(host.innerHTML,/不暴击、伤害浮动取中值/);assert.doesNotMatch(host.innerHTML,/平均伤害预测/);
+  env.view.crit='all';renderDesigner(env);assert.match(host.innerHTML,/不代表实际必定暴击/);
 });
 
 test('sparse extra and invalid actions have three positions, preserve order and escape text',()=>{

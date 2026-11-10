@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {scoreAttackScore,turnMultiplier,damageScore,damageNeeded,predictActions,ruleSchedule,weaknessSummary,ruleWeeks,rulesOn,ruleMultiplier,stageEnemies} from '../public/boss-model.mjs';
+import {scoreAttackScore,turnMultiplier,damageScore,damageNeeded,predictActions,ruleSchedule,weaknessSummary,ruleWeeks,rulesOn,ruleMultiplier,stageEnemies,resolveEnemyParameters} from '../public/boss-model.mjs';
+import {buildEnemy} from '../public/sim/hbr/battle.mjs';
 
 test('stageEnemies drops empty formation slots and attaches details',()=>{
   const event={enemies:{A:{name:'甲',flags:{is_boss:true}}}};
@@ -10,6 +11,34 @@ test('stageEnemies drops empty formation slots and attaches details',()=>{
   assert.equal(list[0].detail.name,'甲');
   assert.equal(list[1].detail,null);
   assert.deepEqual(stageEnemies(event,null),[]);
+});
+
+test('enemy parameters preserve stage zero values and local overrides with their provenance',()=>{
+  const event={kind:'wave',enemies:{A:{base:{dp:18000,hp:24000,param_border:750,atk_rate:100}}}};
+  const stage={label:'phase-one',enemies:[{label:'A',dp:0,hp:24000,paramBorder:0}]};
+  const source=structuredClone({event,stage});
+  const raw=resolveEnemyParameters(event,stage,stage.enemies[0]);
+  assert.deepEqual([raw.dp,raw.hp,raw.border],[0,24000,0]);
+  assert.equal(raw.parameterSource.difficultyVerified,false);
+  const enemy=buildEnemy(event,stage,{parameterOverride:{dp:180000,hp:240000,border:775}});
+  assert.deepEqual([enemy.dp,enemy.hp,enemy.maxDp,enemy.maxHp,enemy.border],[[180000],240000,180000,240000,775]);
+  assert.deepEqual(enemy.parameterSource.fields,{dp:'override',hp:'override',border:'override'});
+  assert.deepEqual(enemy.parameterSource.original,{dp:0,hp:24000,border:0});
+  assert.deepEqual({event,stage},source);
+  const zero=buildEnemy(event,stage,{parameterOverride:{dp:0,border:0}});
+  assert.deepEqual(zero.dp,[]);assert.equal(zero.border,0);
+});
+
+test('enemy overrides do not accept invalid numbers or disguise absent health as a cleared enemy',()=>{
+  const event={enemies:{A:{base:{dp:10,hp:20,param_border:30}}}},stage={enemies:[{label:'A'}]};
+  const fallback=buildEnemy(event,stage);
+  assert.deepEqual([fallback.dp,fallback.hp,fallback.border],[[10],20,30]);
+  assert.deepEqual(fallback.parameterSource.fields,{dp:'enemy-base',hp:'enemy-base',border:'enemy-base'});
+  for(const value of [NaN,Infinity,-1,'123'])for(const key of ['dp','hp','border'])assert.throws(()=>buildEnemy(event,stage,{parameterOverride:{[key]:value}}),RangeError);
+  assert.throws(()=>buildEnemy(event,stage,{parameterOverride:{hp:0}}),RangeError);
+  assert.throws(()=>buildEnemy({},stage),/缺失/);
+  assert.equal(resolveEnemyParameters({},stage,stage.enemies[0]).hp,null);
+  assert.deepEqual(buildEnemy(event,stage,{parameterOverride:{hp:null}}).hp,20);
 });
 
 // Values copied from hbr.quest score_attack #104, difficulty 40 (アビス).

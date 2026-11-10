@@ -62,7 +62,7 @@ export function simulateDesign(ctx,o,design){
       if(!trace)return st.killedTurn>0;
       for(const l of st.log.slice(logSeen)){
         if(l.t==='kill')add({...meta,kind:'kill',label:`击杀 ${l.name}`});
-        else if(l.t==='break')add({...meta,kind:'break',label:`破盾 ${enemyName}`});
+        else if(l.t==='break')add({...meta,kind:'break',label:`破盾 ${l.name||enemyName}`});
         else if(l.t==='transcend')add({...meta,kind:'transcend',label:'超越发动'});
       }
       logSeen=st.log.length;

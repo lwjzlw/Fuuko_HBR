@@ -21,6 +21,11 @@
    "table": "enemies",
    "url": "https://master.hbr.quest/v1/enemies.json",
    "sha256": "61870bb6024eb234da4b516bf6d75d7020b69fed12c15b2eaf8aa789415eba15"
+  },
+  {
+   "table": "enemies/waveBattle_06_Hard_CrowHorseNimbleVirtual_40",
+   "url": "https://master.hbr.quest/v1/enemies/waveBattle_06_Hard_CrowHorseNimbleVirtual_40.json",
+   "sha256": "825ab8cdf7a5990a109becd7ffa8fe26ac15861c040eeaca15e8b5530a49b8f0"
   }
  ],
  "enemyDetailUrl": "https://master.hbr.quest/v1/enemies/<label>.json",
@@ -2104,15 +2109,16 @@
    "outDate": "2026-07-31 01:59:59+00:00",
    "bosses": [
     "[演習機]OozeGate",
+    "[演習機]NimbleHorse",
     "[演習機]TyrantWhip",
     "[演習機]WireFrameγ",
     "[演習機]SignalVeil"
    ],
-   "stages": 4,
+   "stages": 5,
    "rules": 3,
    "file": "wave/WaveBattle0006.json",
-   "withActions": 6,
-   "enemyCount": 6
+   "withActions": 7,
+   "enemyCount": 7
   },
   {
    "kind": "wave",

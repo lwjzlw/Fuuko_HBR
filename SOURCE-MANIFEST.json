@@ -19,8 +19,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7462,
-      "sha256": "dac6b852a709fab151be1b383032beda589b2a2e14e0f8f92d9a8d7b6be1dd09"
+      "bytes": 9269,
+      "sha256": "6af5c7a3770edcba476496c2af882495c4eef24995033d24a62d4ce44faae93a"
     },
     {
       "path": "Update-Catalog.ps1",
@@ -34,13 +34,18 @@
     },
     {
       "path": "hbr_app.py",
-      "bytes": 10994,
-      "sha256": "111cefc53d04e4b929e7a6585d7b85f008396decc9cf607ba8054d664a747707"
+      "bytes": 11414,
+      "sha256": "6244ddec96d182b58aed5e060afc32c91e7beba9a10dcc7505bb1d33d0825a7d"
     },
     {
       "path": "hbr_cache.py",
       "bytes": 26880,
       "sha256": "f3f4169f9e515eeaf28615b7e922e709db2ec9ac3e8a97845983729c2951ccd0"
+    },
+    {
+      "path": "hbr_enemy_parameters.py",
+      "bytes": 6328,
+      "sha256": "cda281949d168c63ce757111663a96f1dc0fa3efc1ade24cf3b549539e780773"
     },
     {
       "path": "package.json",
@@ -54,8 +59,8 @@
     },
     {
       "path": "public/boss-model.mjs",
-      "bytes": 11346,
-      "sha256": "ee3bc85234fe596e185031b28b9f7ec083b38564967b073b430da8526777cd36"
+      "bytes": 13090,
+      "sha256": "4d44d7f1e6688b69fefac4d64de1f79a557409643ca293fcf36d323969b1ddf6"
     },
     {
       "path": "public/boss-ui.mjs",
@@ -179,8 +184,8 @@
     },
     {
       "path": "public/data/bosses/index.json",
-      "bytes": 51957,
-      "sha256": "77b4871be3889b982c35b0ad0843e7a1e29cb7eb74b79ef0d4208736881c5c2a"
+      "bytes": 52249,
+      "sha256": "c4c1552b992d1841f5816d1b8e3a5a7323432c1e168ac9d4a86f3642fc10924c"
     },
     {
       "path": "public/data/bosses/sa/scoreAttack1.json",
@@ -729,8 +734,8 @@
     },
     {
       "path": "public/data/bosses/wave/WaveBattle0006.json",
-      "bytes": 35843,
-      "sha256": "c887c334dce6aa7079abcb391606c3fa494848cc00b04bcb7fe1ffe596bbd888"
+      "bytes": 44571,
+      "sha256": "bbfd84758e8db9ece53ac521c10971fd96af2348905cf664529eaf0362410364"
     },
     {
       "path": "public/data/bosses/wave/WaveBattle0007.json",
@@ -769,8 +774,8 @@
     },
     {
       "path": "public/designer-ui.mjs",
-      "bytes": 13032,
-      "sha256": "a3d999015c9fc0c10287cd6fa3b59f3f073ce38f7562f9d7c1afe65bf05575b9"
+      "bytes": 13163,
+      "sha256": "c37efabc86483494f634ca94f2f4691076024f7301f9162c22f467e423630121"
     },
     {
       "path": "public/equipment.mjs",
@@ -795,7 +800,7 @@
     {
       "path": "public/index.html",
       "bytes": 2663,
-      "sha256": "232a4581011fdff2a6f886c3d21f38d2a3f31121576e88e93bb17d1193fc609f"
+      "sha256": "06b89a411f28124a551e97c70461f4ee3027eafb0ad6a4e7aa55a4b0466d1c11"
     },
     {
       "path": "public/legacy-storage.mjs",
@@ -809,8 +814,13 @@
     },
     {
       "path": "public/planner-axis.mjs",
-      "bytes": 5066,
-      "sha256": "8706cc3d57d75c7e51374ec915533dabf43616fe4f0a56cc2608e17850b1a8db"
+      "bytes": 5901,
+      "sha256": "b0935de32c5755ab8ddf8716366c5775c6ab1419086c1be4b51fce26a39ae742"
+    },
+    {
+      "path": "public/planner-enemies.mjs",
+      "bytes": 4421,
+      "sha256": "03183e5b2037754e407c0e1725a1d613bf67f10d6daa8bb3c5688ca179bebcf9"
     },
     {
       "path": "public/planner-loadout.mjs",
@@ -819,13 +829,13 @@
     },
     {
       "path": "public/planner-results.mjs",
-      "bytes": 5429,
-      "sha256": "87b65b0b4412a06c7e247988a258fdcf5e9cbaabad5afc3642bcf31a5c0755b1"
+      "bytes": 6390,
+      "sha256": "563f7f866d8305c5d22d66f373a7376ddcbbba940e7ab6770f0346a6881c6c36"
     },
     {
       "path": "public/planner-ui.mjs",
-      "bytes": 59695,
-      "sha256": "25eb75ce6e93947a77289455c980fd53804fbaebaadb073c87f9de0cf89e4110"
+      "bytes": 66762,
+      "sha256": "11012757d5d7c1a18a50f23601a493783a2675634a7b372ed2a9f3aa62b471b7"
     },
     {
       "path": "public/progress.mjs",
@@ -839,8 +849,8 @@
     },
     {
       "path": "public/sim/designer.mjs",
-      "bytes": 14318,
-      "sha256": "33bbcf9e7d47f5955b95547218d39c61966099c5d65c037009d4270032e8f8a0"
+      "bytes": 14326,
+      "sha256": "0d698e87288d179cd5c3a0194ab82cdd6c21bd044f55c85ff9119551d9814e2a"
     },
     {
       "path": "public/sim/expr.mjs",
@@ -849,8 +859,8 @@
     },
     {
       "path": "public/sim/hbr/battle.mjs",
-      "bytes": 99744,
-      "sha256": "b8fdf7649079c12e46d51d5c0887a8efaafcd03b207f9c7ed15f370ac97d7184"
+      "bytes": 99854,
+      "sha256": "44579ff64e675da6c36cb533cbeee289d9ee6a1c21859ad2dddd622aca37b877"
     },
     {
       "path": "public/sim/hbr/damage.mjs",
@@ -884,8 +894,8 @@
     },
     {
       "path": "public/sim/optimizer-options.mjs",
-      "bytes": 3159,
-      "sha256": "08f6473d2a82560cd8dd3dc6a752b89452abd895ea23e2ce0e8cc392728836f9"
+      "bytes": 3449,
+      "sha256": "0502731c74ad0d615daeb6a74ed841ae3634fe01141c0e7b81621f1b0240210d"
     },
     {
       "path": "public/sim/optimizer-sub.mjs",
@@ -899,8 +909,8 @@
     },
     {
       "path": "public/sim/optimizer.mjs",
-      "bytes": 47096,
-      "sha256": "22a1ef330e9a3f896a9bc1e837706e8b3ecfc74bbe21a77527e23eaa6e7bcdd2"
+      "bytes": 47712,
+      "sha256": "11ad0073fee9eb4739e2bb58582c3b0e0475b3907cead942142e0b4759912458"
     },
     {
       "path": "public/sim/party.mjs",
@@ -949,8 +959,8 @@
     },
     {
       "path": "scripts/build-bosses.py",
-      "bytes": 16816,
-      "sha256": "a6207ebc54498d6a2b2c09f4a8abe5a35dc2be1510b9aa041dd57d6af4964b37"
+      "bytes": 18676,
+      "sha256": "95c800a6da41c87563be9a3493a456c2bba3da9cbfe80ebb6dac5673c0c97a43"
     },
     {
       "path": "scripts/build-catalog.mjs",
@@ -973,6 +983,11 @@
       "sha256": "1c9ff6f5ca6274ed8e84e9637409b72899b2f20fbf565cc085ea28a61730b4e6"
     },
     {
+      "path": "scripts/build-wave-parameters.py",
+      "bytes": 7608,
+      "sha256": "49c69c0b870fbcebcecbc4ee78f3e1888a7601204c7e6497ccd3dfff7f28bb29"
+    },
+    {
       "path": "scripts/download_images.py",
       "bytes": 5878,
       "sha256": "a3781ffd4bbe52da39299f9861b5a568f06b0f5b83c49ef6984c4519072fd293"
@@ -984,8 +999,8 @@
     },
     {
       "path": "scripts/package_release.py",
-      "bytes": 7997,
-      "sha256": "eefe154eb16e1ed4f1f165c62ff707546904ae3be74fb3ab9f536f1bac65404f"
+      "bytes": 8154,
+      "sha256": "26d37853d66327d1c63d16b80928cdeb03bace47f59ce4258a27c6fe99d6e6fc"
     },
     {
       "path": "scripts/release_support.py",
@@ -1014,8 +1029,8 @@
     },
     {
       "path": "tests/boss-model.test.mjs",
-      "bytes": 5053,
-      "sha256": "5bc220fffb3047f4810905f0c27591cc2133482e5558d8e300f87a56e827ae41"
+      "bytes": 7106,
+      "sha256": "99085408e2c860b4001b034d15395271b8ecf42e6a15e5a2f6ca9bd78de1a554"
     },
     {
       "path": "tests/box.test.mjs",
@@ -1031,6 +1046,11 @@
       "path": "tests/catalog.test.mjs",
       "bytes": 8354,
       "sha256": "0a57909c2b90ff4774b89b6629f6390f51cae163d4b2d7e7964fa702e8bbdda4"
+    },
+    {
+      "path": "tests/enemy-stats.test.mjs",
+      "bytes": 3706,
+      "sha256": "ddb273390970545e401fafdd066f23c8cc2bbac11772042cd567249ad163bf81"
     },
     {
       "path": "tests/equipment.test.mjs",
@@ -1054,8 +1074,8 @@
     },
     {
       "path": "tests/optimizer-stability.test.mjs",
-      "bytes": 7763,
-      "sha256": "cde46d22f9707d545d5a7312ec7c048e96ad55bfe1f2b8d08ac1d5f8e979950f"
+      "bytes": 11713,
+      "sha256": "a196a591bf55c1d85ceda276d7a957fa06daeab058523fcddabfe4ec76e1c77e"
     },
     {
       "path": "tests/optimizer.test.mjs",
@@ -1064,13 +1084,18 @@
     },
     {
       "path": "tests/planner-display.test.mjs",
-      "bytes": 7213,
-      "sha256": "871c39b5140bca8185da4770e46a27d9c97738403c56013d5781a2c4c3d75557"
+      "bytes": 10381,
+      "sha256": "02855a6ac85fdac9a98c2b808b747d5255f58b94c329482b3bf46dac8a2659c3"
+    },
+    {
+      "path": "tests/planner-enemies.test.mjs",
+      "bytes": 4436,
+      "sha256": "b765efb03fbdfb1d30d2974a0f377d961370c01a5bbacabe2889bf0feebc76a3"
     },
     {
       "path": "tests/planner-results.test.mjs",
-      "bytes": 5398,
-      "sha256": "2e24c8e099bc6df31be7d368d3fb14c81c0a5fc85f06f24081f25366a8aec375"
+      "bytes": 6531,
+      "sha256": "c0eca0044f54e278d92177363ec5c81e90634eb979bb5a4f2359273315044b75"
     },
     {
       "path": "tests/planner.test.mjs",
@@ -1089,8 +1114,8 @@
     },
     {
       "path": "tests/test_build_bosses.py",
-      "bytes": 5630,
-      "sha256": "c8e3839c5a726a0e8710b608011234a0a470a426290e5ed9b79e6b16c2b4f845"
+      "bytes": 8717,
+      "sha256": "ebcbcdafca1936883146561799da2eff15a0c076cbb5499bfd947b6d52102d2a"
     },
     {
       "path": "tests/test_build_skills.py",
@@ -1104,8 +1129,8 @@
     },
     {
       "path": "tests/test_hbr_app.py",
-      "bytes": 6377,
-      "sha256": "dd52c0b0611db0f6675e9bfbb24e343536622dc9182960635109db421ce563d5"
+      "bytes": 7593,
+      "sha256": "206c3b1f877851019d0e47bb2821095494757ee1d34fc96e108c01b5e12e35e3"
     },
     {
       "path": "tests/test_hbr_cache.py",
@@ -1118,9 +1143,14 @@
       "sha256": "aa31f2f682a0c07823e881e36c189e6e05333362c4dfd51054f5ccacc8898775"
     },
     {
+      "path": "tests/test_wave_parameters.py",
+      "bytes": 9882,
+      "sha256": "913be49afc3af5f4b1eb0eece81435a0260ed2df984a95ff6b7dc70c440b3319"
+    },
+    {
       "path": "workbench.json",
       "bytes": 647,
-      "sha256": "16043e647573cf7a36776238723398619774c775c986ae91f8113f2a9cd76c7b"
+      "sha256": "f23625fed69f28037394fa7bd12834c7165e53000fdfbc9ee1397b60aadc16db"
     },
     {
       "path": "启动研究室.vbs",

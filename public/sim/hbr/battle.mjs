@@ -6,6 +6,7 @@ import {computeAttack,earringBonus,capAttack} from './damage.mjs';
 import {buffSize,debuffSize,isStrengthenableDebuff,isDefenseDebuff,isAttackBuff} from './effects.mjs';
 import {attackModel,effectModel,elementOf,ATTACK_PART_TYPES} from './model.mjs';
 import {evaluate,UnsupportedCondition} from '../expr.mjs';
+import {resolveEnemyParameters} from '../../boss-model.mjs';
 
 export const NORMAL=-1;
 const ELEM_TITLE={fire:'Fire',ice:'Ice',thunder:'Thunder',light:'Light',dark:'Dark'};
@@ -96,19 +97,21 @@ function supportPassives(m,data){
 }
 
 /** 敌人：弱点% = 100 − 主数据抗性值；DP 为一条槽（额外量表另记 flag）。 */
-export function buildEnemy(event,stage,{enemyLabel,rules=[]}={}){
+export function buildEnemy(event,stage,{enemyLabel,rules=[],parameterOverride={}}={}){
   const list=(stage.enemies||[]).filter(e=>e?.label);
   const pick=list.find(e=>e.label===enemyLabel)||list.find(e=>event.enemies?.[e.label]?.flags?.is_boss)||list[0];
   if(!pick)throw Error('这一档没有敌人数据');
+  const params=resolveEnemyParameters(event,stage,pick,{override:parameterOverride});
+  if(params.dp===null||params.hp===null||params.border===null)throw Error('敌人 DP、HP 或状态值缺失，请先核对参数');
   const d=event.enemies?.[pick.label]||{};
   const el=d.resist?.element||{};
   const pct=k=>100-(Number(el[RES_KEY[k]])||0);
   const [dRate,maxDr]=pick.destruction||[d.base?.d_rate||0,d.base?.max_d_rate||999];
   return {
     label:pick.label,name:pick.name||d.name||pick.label,
-    border:pick.paramBorder||d.base?.param_border||0,atkRate:d.base?.atk_rate??100,
+    border:params.border,atkRate:d.base?.atk_rate??100,parameterSource:params.parameterSource,
     // 敌方 OD 率：主数据 od_rate 万分比（遭遇战 #8 为 5000 = 50%）；0 视为 100%
-    odRate:(d.base?.od_rate||10000)/10000,hp:pick.hp,dp:pick.dp>0?[pick.dp]:[],maxHp:pick.hp,maxDp:pick.dp,
+    odRate:(d.base?.od_rate||10000)/10000,hp:params.hp,dp:params.dp>0?[params.dp]:[],maxHp:params.hp,maxDp:params.dp,
     destruction:dRate||0,destructionLimit:maxDr||999,initialDestruction:Math.max(100,d.base?.ini_d_rate||0)/100,
     weaknesses:{physical:{slash:pct('slash'),stab:pct('stab'),strike:pct('strike')},element:{fire:pct('fire'),ice:pct('ice'),thunder:pct('thunder'),light:pct('light'),dark:pct('dark'),nonelemental:pct('nonelemental')}},
     pattern:d.pattern||{},skills:d.skills||[],others:list.length-1,extraGauge:(stage.extraGauge||[]).length>0,rules,
@@ -779,61 +782,63 @@ function doAttack(st,actor,skill,part,info){
     :{...attackModel(skill,part,{characterId:m.charId,styleId:m.styleId,physicalType:String(m.attackType||'slash').toLowerCase()}),tearEnhancementType:m.tearType};
   // 沉浸状态：攻击技能带所选属性（普攻、追击不在对象内）
   if(!info.normal&&u.reinforced)model.element=u.reinforced;
-  const mods=collectMods(st,actor,model,info);
-  const res=computeAttack({skill:model,level:skill.level||1,stats:memberStats(st,actor),enemy:{...E,dp:E.dp,hp:E.hp},mods,
-    state:{destructionRate:en.dr,hp:en.hp,dp:en.dp}});
-  info.weak=info.weak||res.meta.weak;
-  // 取值：浮动取中点；暴击按 critMode
-  const rate=res.critRate.total/100,mode=st.ctx.opt.critMode||'expected';
-  const w=mode==='all'?1:mode==='none'?0:rate;
+  const mode=st.ctx.opt.critMode||'expected',rng=st.ctx.opt.rng;
+  // 全体攻击也按各目标的状态值、抗性、DP/HP、减益及破坏率计算。
+  // 先冻结本次攻击的增益，再逐目标结算，避免第一个目标触发的效果影响同次攻击的旁敌。
+  const targets=part.targetType==='All'&&st.queue?st.queue.filter(q=>!q.dead&&q.state.hp>0):[st.queue?.find(q=>q.state===en)||{enemy:E,state:en}];
+  const attacks=targets.map(q=>{
+    const view={...st,ctx:{...st.ctx,enemy:q.enemy},enemy:q.state},mods=collectMods(view,actor,model,info);
+    const res=computeAttack({skill:model,level:skill.level||1,stats:memberStats(view,actor),enemy:q.enemy,mods,
+      state:{destructionRate:q.state.dr,hp:q.state.hp,dp:q.state.dp}});
+    const rate=res.critRate.total/100,w=mode==='all'?1:mode==='none'?0:rate;
+    // 沿用主目标的逐段期望/随机取样路径；随机破盾分支仍与 computeAttack 的区间路径近似一致。
+    const hits=res.perHit.map((h,k)=>{const c=res.perHitCrit[k];
+      if(mode==='random'&&rng){const v=rng()<rate?c:h;return {dmg:v.min+(v.max-v.min)*rng(),after:v.after};}
+      return {dmg:((h.min+h.max)/2)*(1-w)+((c.min+c.max)/2)*w,after:mode==='all'?c.after:h.after};});
+    const total=hits.reduce((sum,h)=>sum+h.dmg,0),cap=capAttack(total,!!st.ctx.opt.exAttenuation);
+    if(total>0&&cap<total)for(const h of hits)h.dmg*=cap/total;
+    return {q,view,mods,res,rate,hits};
+  });
+  const rate=attacks.find(a=>a.q.state===en)?.rate??attacks[0]?.rate??0;
   let dealt=0;
-  // 按 hit 回放到状态：沿用 computeAttack 的逐段破坏率（用期望伤害），并更新 DP 槽/HP
-  // critMode 'random'（蒙特卡洛）：每段独立判定暴击，伤害在 min–max（浮动 90–110%）间均匀随机
-  const rng=st.ctx.opt.rng;
-  const hits=res.perHit.map((h,k)=>{const c=res.perHitCrit[k];
-    if(mode==='random'&&rng){const v=rng()<rate?c:h;return {dmg:v.min+(v.max-v.min)*rng(),dp:h.dp,after:h.after};}
-    return {dmg:((h.min+h.max)/2)*(1-w)+((c.min+c.max)/2)*w,dp:h.dp,after:h.after};});
-  // 单次攻击总伤害封顶：10 亿软上限（EX 打分时用 EX 衰减），按比例缩放各段
-  {const raw=hits.reduce((s,h)=>s+h.dmg,0),cap=capAttack(raw,!!st.ctx.opt.exAttenuation);if(raw>0&&cap<raw)for(const h of hits)h.dmg*=cap/raw;}
-  st.shownDamage=(st.shownDamage||0)+hits.reduce((s,h)=>s+h.dmg,0); // 显示伤害：本次攻击全部 hit（含打破/击杀时的溢出）
-  for(const h of hits){
-    if(en.hp<=0)break;
-    const gaugeIdx=en.dp.findIndex(g=>g>0);
-    if(gaugeIdx>=0){
-      const d=Math.min(h.dmg,en.dp[gaugeIdx]);en.dp[gaugeIdx]-=d;dealt+=d;
-      if(en.dp[gaugeIdx]<=0){en.dp[gaugeIdx]=0;if(!en.dp.some(g=>g>0)){en.broken=true;info.breakHits=(info.breakHits||0)+1;if(st.log)st.log.push({t:'break',turn:st.turn});
-        if(m.role==='Breaker')cardBreak(st);} // 遭遇战卡：Breaker 破盾
-        en.dr=Math.max(en.dr,h.after);}
-    }else{
-      const d=Math.min(h.dmg,en.hp);en.hp-=d;dealt+=d;en.dr=Math.max(en.dr,h.after);
+  for(const {q,view,mods,res,hits} of attacks){
+    const es=q.state,enemy=q.enemy;let targetDealt=0;
+    info.weak=info.weak||res.meta.weak;
+    st.shownDamage=(st.shownDamage||0)+hits.reduce((sum,h)=>sum+h.dmg,0);
+    for(const h of hits){
+      if(es.hp<=0)break;
+      const gauge=es.dp.findIndex(g=>g>0);
+      if(gauge>=0){
+        // 破盾的一段只扣当前盾；该段的多余伤害不能直接进入 HP。
+        const d=Math.min(h.dmg,es.dp[gauge]);es.dp[gauge]-=d;targetDealt+=d;
+        if(es.dp[gauge]<=0){es.dp[gauge]=0;
+          if(!es.dp.some(g=>g>0)){es.broken=true;info.breakHits=(info.breakHits||0)+1;
+            if(st.log)st.log.push({t:'break',turn:st.turn,name:enemy.name});
+            if(m.role==='Breaker')cardBreak(st);}
+          es.dr=Math.max(es.dr,h.after);
+        }
+      }else{const d=Math.min(h.dmg,es.hp);es.hp-=d;targetDealt+=d;es.dr=Math.max(es.dr,h.after);}
     }
-  }
-  if(en.hp<=0&&!st.killedTurn){en.hp=0;st.killedTurn=st.turn;}
-  // 阶段多敌：全体攻击对其余存活敌人造成同样伤害（近似：不逐段算破坏率，按各自 DP→HP 扣）
-  if(st.queue&&(part.targetType==='All')){const total=hits.reduce((a,h)=>a+h.dmg,0);
-    for(const q of st.queue)if(!q.dead&&q.state!==en){let left=total;const s2=q.state;st.shownDamage=(st.shownDamage||0)+total;
-      for(let g=0;g<s2.dp.length&&left>0;g++){const d=Math.min(left,s2.dp[g]);s2.dp[g]-=d;left-=d;dealt+=d;}
-      if(!s2.dp.some(g=>g>0))s2.broken=true;
-      if(left>0){const d=Math.min(left,s2.hp);s2.hp-=d;dealt+=d;}
-      if(s2.hp<=0){s2.hp=0;q.dead=true;if(st.log)st.log.push({t:'kill',turn:st.turn,name:q.enemy.name});}}
-    flag(st,'approx','全体攻击对其余敌人按同伤害近似');}
-  // OD：每 hit 2.5%×耳环；被抗（任一物理/属性 <100%）则 0（Planner Pl/Cs）
-  const resisted=model.physicalType&&E.weaknesses.physical[model.physicalType]<100||E.weaknesses.element[model.element]<100;
-  if(!info.normal){
-    const extra=mods.funnel.length;
-    // 每段 OD 点数 = ⌊250 × 敌方 OD 率⌋ × 耳环系数（OD与破坏率计算表 261011）
-    const per=floorOd(Math.floor(R.OD_PER_HIT*100*(E.odRate??1))/100*(1+odEarring(m.equipment.odEarringBonus,model.hitCount)/100));
-    // 全体攻击按命中的敌人数计 OD（伤害计算表 v4.9「目标数」；社区排轴器按 1 体）
-    const targets=part.targetType==='All'?1+Math.max(0,E.others||0):1;
-    if(!resisted)addOd(st,(model.hitCount+extra)*per*st.odGainMult*targets);
+    if(es.hp<=0){es.hp=0;
+      if(es===en&&!st.killedTurn)st.killedTurn=st.turn;
+      if(st.queue&&!q.dead){q.dead=true;if(st.log)st.log.push({t:'kill',turn:st.turn,name:enemy.name});}}
+    dealt+=targetDealt;
+    const inscription=enemyStatus(view,'Inscription');if(inscription&&targetDealt>0)inscription.damage=(inscription.damage||0)+targetDealt;
+    // 只给实际参与本次攻击且不被抗的目标计 OD，不再乘静态敌人数。
+    const resisted=model.physicalType&&enemy.weaknesses.physical[model.physicalType]<100||enemy.weaknesses.element[model.element]<100;
+    if(!info.normal&&!resisted){
+      const per=floorOd(Math.floor(R.OD_PER_HIT*100*(enemy.odRate??1))/100*(1+odEarring(m.equipment.odEarringBonus,model.hitCount)/100));
+      // 单敌搜索旧接口可能只有数量摘要，没有旁敌状态；保持其 OD 估算。
+      const count=!st.queue&&part.targetType==='All'?1+Math.max(0,enemy.others||0):1;
+      if(count>1)flag(st,'approx','全体攻击缺少旁敌状态，仅按目标数估算 OD');
+      addOd(st,(model.hitCount+mods.funnel.length)*per*st.odGainMult*count);
+    }
   }
   st.turnDamage[st.turn]=(st.turnDamage[st.turn]||0)+dealt;
   st.totalDamage+=dealt;
   if(!info.normal&&st.skillDamageByElement){const el=model.element||'nonelemental';
     st.skillDamageByElement[el]=(st.skillDamageByElement[el]||0)+(st.shownDamage-shownBefore);}
   info.damage=(info.damage||0)+dealt;info.attacked=true;info.crit=rate;
-  // 刻印只累计本次实际进入 DP／HP 的伤害（不含过量伤害）；DoT 与引爆不走这里。
-  const inscription=enemyStatus(st,'Inscription');if(inscription&&dealt>0)inscription.damage=(inscription.damage||0)+dealt;
   if(!info.normal){
     // 攻击得标记（TokenSetByAttacking：每对 1 个敌人造成伤害 +1）
     for(const p of m.passives)for(const part of p.parts||[])if(part.skillType==='TokenSetByAttacking')u.tokens=Math.min(R.MORALE_TOKEN_STACK_MAX,u.tokens+(part.power?.[0]||1));

@@ -14,7 +14,7 @@ import {search,replay} from './search.mjs';
 import {simulateDesign,designFromPlan,monteCarlo,emptyTurn,mulberry32} from './designer.mjs';
 import {applyCard,relevantCards,cardById} from './cards.mjs';
 import {waveScore,waveRoundScore} from '../boss-model.mjs';
-import {normalizeTeamElement,resultLimit,rawIdentity,candidateIdentity,attackElements,elementSummary,searchBudget} from './optimizer-options.mjs';
+import {normalizeTeamElement,normalizeMinSuccess,normalizeSuccessBasis,resultLimit,rawIdentity,candidateIdentity,attackElements,elementSummary,searchBudget} from './optimizer-options.mjs';
 
 const lc=x=>String(x||'').toLowerCase();
 const EAR_LABEL={attacking:'进攻耳環',breaking:'BREAK耳環',drive:'DRIVE耳環',devastating:'破坏率耳環'};
@@ -51,7 +51,7 @@ function inventoryBest(inv,byId){
  *          target:{kind, ev, rules, phases:[{enemies}], cards:[每阶段卡|null], difficulty, international},
  *          ruleOptions:[{ids,rules,phases}]（可选：要搜索的规则组合，每项带该规则下构建的阶段敌人）, ruleIndex（当前所选规则在其中的位置）},
  *          opts:{goal:'score'|'stable'|'fast', teamElement:''|'ice'|'fire'|'thunder'|'light'|'dark'|'nonelemental',
- *                beam, screenBeam, maxTurns, mcRuns, searchEvals, searchBatch, randomSeeds, top:1..20, optimizeCards, broad, fixedTeam, allOrbs, threads},
+ *                beam, screenBeam, maxTurns, mcRuns, searchEvals, searchBatch, randomSeeds, top:1..20, minSuccess:0..1, minSuccessBasis:'onPlan'|'success', optimizeCards, broad, fixedTeam, allOrbs, threads},
  *          incumbents:[{members,design,ruleIds,label}]（同任务的旧轴，重新模拟，不复用旧评分）}
  */
 export async function optimize(input,onProgress=()=>{},runner=null){
@@ -83,6 +83,8 @@ function setup(input,onProgress=()=>{}){
   // 目标：score = 通关样本均分最高（遭遇战）；stable = 成功率优先；fast = 回合最少
   const goal=opts.goal||(isWave?'score':'stable');
   const teamElement=normalizeTeamElement(opts.teamElement),topLimit=resultLimit(opts.top);
+  const minSuccess=normalizeMinSuccess(opts.minSuccess);
+  const minSuccessBasis=normalizeSuccessBasis(opts.minSuccessBasis);
   const userCards=(target.cards||[]).some(Boolean)?target.cards:null;
   const progress=(step,done,total,label)=>onProgress({step,done,total,label,elapsed:Date.now()-t0});
 
@@ -649,11 +651,14 @@ function setup(input,onProgress=()=>{}){
 
   // 最终排名：最高分 = 成功样本条件均分；失败率独立保留；零成功样本没有均分。
   out.sort(compareFinal);
+  // 按轴完成率 / 含续打通关率可单独划线；先筛全部重评结果再取前 N，低于线的高分不占名额。
+  const qualified=out.filter(r=>Number.isFinite(r.mc?.[minSuccessBasis])&&r.mc[minSuccessBasis]>=minSuccess);
   return {elapsed:Date.now()-t0,evaluated:results.length,screened,promoted,iterations:iter,searchBudget:{evaluations:maxIter,batch:budget.batch,seed:opts.seed??97},incumbents:incumbentInputs.length,
+    minSuccess,minSuccessBasis,rejectedBySuccess:out.length-qualified.length,qualifiedCandidates:qualified.length,resultCandidates:out.length,
     candidates:{seeds:cands.filter(c=>['base','deck','swap'].includes(c.origin)).length,random:cands.filter(c=>c.origin==='random').length,
       evolve:cands.filter(c=>c.origin==='evolve').length,pool:pool.length},
     topCards:pool.filter(x=>x.elite>0).sort((a,b)=>b.elite-a.elite).slice(0,12).map(x=>({name:name(x.c.styleId),role:x.s.role,elite:Math.round(x.elite*100)/100})),
-    goodElements:goodEls,teamElement,requested:topLimit,overkill,cardProb:{top1:cardSeenProb(1),top3:cardSeenProb(3)},errors,threads:lanes,goal,rules:ruleOpts.map(o=>o.names.join('、')||'无'),top:out.slice(0,topLimit)};
+    goodElements:goodEls,teamElement,requested:topLimit,overkill,cardProb:{top1:cardSeenProb(1),top3:cardSeenProb(3)},errors,threads:lanes,goal,rules:ruleOpts.map(o=>o.names.join('、')||'无'),top:qualified.slice(0,topLimit)};
   }
   return {coordinate,handle};
 }

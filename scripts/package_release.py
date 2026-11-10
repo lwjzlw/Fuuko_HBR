@@ -15,14 +15,14 @@ from download_images import catalog_assets, image_info
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = (
-    '.gitignore', '.gitattributes', 'README.md', 'NOTICE.md', 'hbr_app.py', 'hbr_cache.py',
+    '.gitignore', '.gitattributes', 'README.md', 'NOTICE.md', 'hbr_app.py', 'hbr_cache.py', 'hbr_enemy_parameters.py',
     'workbench.json', 'package.json', '启动研究室.vbs', 'Update-Catalog.ps1', 'Update-Images.ps1',
 )
 PUBLIC_MODULES = (
     'app.mjs', 'boss-model.mjs', 'boss-ui.mjs', 'box-ui.mjs', 'box.mjs', 'cache-sync.mjs',
     'catalog-images.mjs', 'catalog-ui.mjs', 'catalog.mjs', 'designer-ui.mjs', 'equipment.mjs',
     'legacy-storage.mjs', 'persist.mjs', 'planner-axis.mjs', 'planner-ui.mjs', 'planner-results.mjs', 'planner-loadout.mjs',
-    'progress.mjs', 'soul.mjs', 'storage-v2.mjs', 'storage.mjs', 'team-verification.mjs',
+    'progress.mjs', 'soul.mjs', 'storage-v2.mjs', 'storage.mjs', 'team-verification.mjs', 'planner-enemies.mjs',
     'index.html', 'theme.js', 'style.css', 'catalog.css', 'image-placeholder.svg',
     'sim/cards.mjs', 'sim/designer.mjs', 'sim/expr.mjs', 'sim/optimizer-sub.mjs',
     'sim/optimizer-worker.mjs', 'sim/optimizer.mjs', 'sim/optimizer-options.mjs', 'sim/party.mjs', 'sim/search.mjs', 'sim/worker.mjs',
@@ -31,13 +31,13 @@ PUBLIC_MODULES = (
 )
 SCRIPTS = (
     'build-bosses.py', 'build-catalog.mjs', 'build-equipment.mjs', 'build-skills.py',
-    'build-stats.py', 'followup-hits.json', 'package_release.py', 'release_support.py', 'download_images.py',
+    'build-stats.py', 'build-wave-parameters.py', 'followup-hits.json', 'package_release.py', 'release_support.py', 'download_images.py',
 )
 TESTS = (
     'boss-model.test.mjs', 'box.test.mjs', 'cache-sync.test.mjs', 'catalog.test.mjs',
     'equipment.test.mjs', 'planner.test.mjs', 'planner-results.test.mjs', 'planner-display.test.mjs', 'progress.test.mjs', 'storage.test.mjs',
     'test_build_bosses.py', 'test_build_skills.py', 'test_build_stats.py', 'test_hbr_app.py',
-    'test_hbr_cache.py', 'test_release.py', 'optimizer.test.mjs', 'optimizer-stability.test.mjs', 'monte-carlo.test.mjs', 'fixtures/optimizer-input.mjs', 'fixtures/community-cases.json',
+    'test_hbr_cache.py', 'test_wave_parameters.py', 'test_release.py', 'optimizer.test.mjs', 'optimizer-stability.test.mjs', 'monte-carlo.test.mjs', 'planner-enemies.test.mjs', 'enemy-stats.test.mjs', 'fixtures/optimizer-input.mjs', 'fixtures/community-cases.json',
 )
 
 
