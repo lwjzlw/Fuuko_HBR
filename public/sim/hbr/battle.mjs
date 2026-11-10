@@ -1,0 +1,1400 @@
+// 回合模拟 v2：回合规则按社区计算器 Planner 模块（SP、OD、持续时间、追加回合、被动时机），
+// 伤害按 Calculator 模块（damage.mjs），效果量按 effects.mjs。所有数据来自公开主数据（skills.json）。
+// 模拟是确定性的；暴击按 critMode 取期望/不暴击/全暴击，浮动取 1.0（min/max 的中点）。
+import * as R from './rules.mjs';
+import {computeAttack,earringBonus,capAttack} from './damage.mjs';
+import {buffSize,debuffSize,isStrengthenableDebuff,isDefenseDebuff,isAttackBuff} from './effects.mjs';
+import {attackModel,effectModel,elementOf,ATTACK_PART_TYPES} from './model.mjs';
+import {evaluate,UnsupportedCondition} from '../expr.mjs';
+
+export const NORMAL=-1;
+const ELEM_TITLE={fire:'Fire',ice:'Ice',thunder:'Thunder',light:'Light',dark:'Dark'};
+const RES_KEY={fire:'fire',ice:'ice',thunder:'thunder',light:'light',dark:'dark',nonelemental:'nonelement',slash:'slash',stab:'stab',strike:'strike'};
+
+// ---------------------------------------------------------------- 构建
+
+/**
+ * members[i] = {styleId, stats{str..luk}, front, limitBreak, skillLevels{label:lv}, extraStyleIds[], initialSp, tearLevel,
+ *               equipment:{earring:{type,bonus}|null, odEarringBonus, necklaceAttack, ringElement, ringLevel}}
+ */
+/** 宝玉（宝珠）技能 ID：4630xxxx 主动、4645xxxx 饰品被动。 */
+export const isOrbSkillId=id=>/^46(30|45)\d{4}$/.test(String(id));
+export function buildParty(members,data){
+  const styleById=new Map(data.catalog.styles.map(s=>[s.id,s]));
+  const charById=new Map(data.catalog.characters.map(c=>[c.id,c]));
+  return members.map((m,i)=>{
+    const style=styleById.get(m.styleId);
+    if(!style)throw Error(`第 ${i+1} 位：找不到卡面 ${m.styleId}`);
+    const char=charById.get(style.characterId);
+    const own=data.skills.styles[m.styleId]||{skills:[],passives:[]};
+    const pool=[...own.skills.map(s=>({...s,ownStyle:true}))],seen=new Set(pool.map(s=>s.label));
+    for(const sid of m.extraStyleIds||char?.styleIds||[]){
+      if(sid===m.styleId)continue;
+      for(const s of data.skills.styles[sid]?.skills||[])if(!s.restricted&&!seen.has(s.label)){seen.add(s.label);pool.push(s);}
+    }
+    const lb=Number(m.limitBreak)||0;
+    // 编队里实际装备的技能（缓存 _masterSkillIds）：有就只用这些；对不上时退回全部可用技能
+    let usable=pool;
+    if(m.deckSkillIds?.length){
+      // 编队技能表是游戏里实际装备的（含通用化的其他卡面 EX 技能），以它为准
+      const set=new Set(m.deckSkillIds),all=new Map();
+      for(const sid of [m.styleId,...(char?.styleIds||[])])for(const s of data.skills.styles[sid]?.skills||[])if(set.has(s.id)&&!all.has(s.id))all.set(s.id,{...s,ownStyle:sid===m.styleId});
+      // 宝珠技能、大师技能等非卡面技能（stats.json extraSkills）
+      for(const id of m.deckSkillIds){const x=data.stats?.extraSkills?.[String(id)];if(x&&!all.has(id))all.set(id,{...x,extra:true});}
+      if(all.size)usable=[...all.values()];
+    }
+    // m.allOrbSkills：宝玉（宝珠）技能可随时换装，视为全部可用（4630xxxx 主动、4645xxxx 饰品被动；大师技能 465xxxxx 与角色绑定，不在此列）
+    if(m.allOrbSkills&&data.stats?.extraSkills){
+      const have=new Set(usable.map(s=>s.id));
+      const orbs=Object.entries(data.stats.extraSkills).filter(([id])=>isOrbSkillId(id)&&!have.has(Number(id))).map(([id,x])=>({...x,id:Number(id),extra:true,orb:true}));
+      if(orbs.length)usable=[...usable,...orbs];
+    }
+    // ADMIRAL：不能普攻，改为“指揮行動”（RKayamoriCommandBuff 等，0 SP）。编队技能表里没有它，按卡面补上
+    const command=own.skills.find(s=>/CommandBuff$/.test(s.label||''));
+    if(command&&!usable.some(s=>s.label===command.label))usable=[...usable,{...command,ownStyle:true}];
+    // 「無念無想」：行动选择时可选【沉浸】（雷/光/暗三选一），作为 0 SP 的特殊行动
+    if(own.immersion)usable=[...usable,...['thunder','light','dark'].map(el=>({id:-1,label:'Immersion:'+el,name:'沉浸（'+{thunder:'雷',light:'光',dark:'暗'}[el]+'）',sp:0,consume:'Sp',uses:-1,hitCount:0,maxLevel:1,parts:[],special:'immersion',element:el}))];
+    return {
+      i,styleId:m.styleId,charId:style.characterId,name:char?.name||style.characterId,styleName:style.name,
+      team:style.team,role:style.role,elements:(style.elements||[]).map(x=>String(x).toLowerCase()),attackType:style.attackType,
+      tearType:own.tearType||null,tearLevel:Number(m.tearLevel)||0,transcend:own.transcend||null,weapon:own.weapon||null,followUpHits:own.followUpHits||0,
+      stats:Object.fromEntries(R.STATS.map(k=>[k,Number(m.stats?.[k])||R.DEFAULT_STATS[k]])),
+      skills:usable.map(s=>({...s,level:Math.max(1,m.skillLevels?.[s.label]??s.maxLevel??1)})),deckFiltered:usable!==pool,
+      passives:[...(own.passives||[]).filter(p=>p.step==null||p.step<=lb),
+        // 编队装备的潜在能力（普通潜在为被动技能；固有潜在只加面板，已在面板推算里）
+        ...(m.latentIds||[]).flatMap(id=>data.stats?.latents?.[String(id)]?.passives||[]),
+        // 大师技能里的被动（编队技能表含其 ID 时）；保留来源技能，供 OverwriteSp 定点覆写
+        ...usable.filter(s=>s.extra&&s.passive).map(s=>({...s.passive,skillLabel:s.label})),
+        // 编队技能表里的被动技能（含通用化的其他卡面被动，如東城「日蔭下的午休」开场前卫 OD+10%）
+        ...usable.filter(s=>!s.extra&&s.passive&&(m.deckSkillIds?.length||s.ownStyle)).map(s=>({...s.passive,label:s.passive.label||s.label,name:s.passive.name||s.name,
+          parts:s.passive.parts?.length?s.passive.parts:s.parts,source:'deckPassive',skillLabel:s.label}))
+          .filter(p=>!(own.passives||[]).some(q=>q.label===p.label||q.name===p.name)),
+        // 支援卡的共鸣特性（按支援卡突破数取档）
+        ...supportPassives(m,data)].filter((p,_,all)=>!superseded(p,all)),
+      front:!!m.front,initialSp:Number(m.initialSp)||0,noNormal:!!command,immersion:!!own.immersion,
+      // 我方 DP/HP（面板推算或手填；0 = 未知，此成员不承受伤害）
+      dpMax:Number(m.vitals?.dp)||0,hpMax:Number(m.vitals?.hp)||0,
+      equipment:{earring:m.equipment?.earring||null,odEarringBonus:m.equipment?.odEarringBonus||0,necklaceAttack:!!m.equipment?.necklaceAttack,
+        ringElement:m.equipment?.ringElement||null,ringLevel:m.equipment?.ringLevel??null,skillCountUp:m.equipment?.skillCountUp||{},
+        normalAttackUp:Number(m.equipment?.normalAttackUp)||0,normalElement:m.equipment?.normalElement||null},
+    };
+  });
+}
+/** 「X[特性強化]」取代同名的「X（小）」/「X」（2026-11-09 成瀨「勢如破竹」两档同时出现）。 */
+function superseded(p,all){
+  const base=n=>String(n||'').replace(/[（(][小中大][）)]$/,'').replace(/\[特性強化\]$/,'').trim();
+  return !/\[特性強化\]$/.test(p.name||'')&&all.some(q=>q!==p&&/\[特性強化\]$/.test(q.name||'')&&base(q.name)===base(p.name));
+}
+/** 支援卡共鸣特性：stats.styles[支援卡].resonance → stats.supportSkills[组] 中 lb ≤ 支援卡突破数 的最高档。 */
+function supportPassives(m,data){
+  const sid=m.supportStyleId;if(!sid)return [];
+  const group=data.stats?.styles?.[sid]?.resonance,list=data.stats?.supportSkills?.[group];
+  if(!list?.length)return [];
+  const lb=Number(m.supportLimitBreak)||0;
+  const hit=list.filter(e=>e.lb<=lb).sort((a,b)=>b.lb-a.lb)[0];
+  return hit?[{...hit.passive,source:'support:'+sid}]:[];
+}
+
+/** 敌人：弱点% = 100 − 主数据抗性值；DP 为一条槽（额外量表另记 flag）。 */
+export function buildEnemy(event,stage,{enemyLabel,rules=[]}={}){
+  const list=(stage.enemies||[]).filter(e=>e?.label);
+  const pick=list.find(e=>e.label===enemyLabel)||list.find(e=>event.enemies?.[e.label]?.flags?.is_boss)||list[0];
+  if(!pick)throw Error('这一档没有敌人数据');
+  const d=event.enemies?.[pick.label]||{};
+  const el=d.resist?.element||{};
+  const pct=k=>100-(Number(el[RES_KEY[k]])||0);
+  const [dRate,maxDr]=pick.destruction||[d.base?.d_rate||0,d.base?.max_d_rate||999];
+  return {
+    label:pick.label,name:pick.name||d.name||pick.label,
+    border:pick.paramBorder||d.base?.param_border||0,atkRate:d.base?.atk_rate??100,
+    // 敌方 OD 率：主数据 od_rate 万分比（遭遇战 #8 为 5000 = 50%）；0 视为 100%
+    odRate:(d.base?.od_rate||10000)/10000,hp:pick.hp,dp:pick.dp>0?[pick.dp]:[],maxHp:pick.hp,maxDp:pick.dp,
+    destruction:dRate||0,destructionLimit:maxDr||999,initialDestruction:Math.max(100,d.base?.ini_d_rate||0)/100,
+    weaknesses:{physical:{slash:pct('slash'),stab:pct('stab'),strike:pct('strike')},element:{fire:pct('fire'),ice:pct('ice'),thunder:pct('thunder'),light:pct('light'),dark:pct('dark'),nonelemental:pct('nonelemental')}},
+    pattern:d.pattern||{},skills:d.skills||[],others:list.length-1,extraGauge:(stage.extraGauge||[]).length>0,rules,
+  };
+}
+
+// ---------------------------------------------------------------- 状态
+
+let effSeq=0;
+export function initialState(party,enemy,opt={}){
+  const st={
+    turn:0,round:'start',odLevel:0,odRounds:0,odWindow:null,od:0,
+    units:party.map(u=>({i:u.i,sp:R.SP_INITIAL+u.initialSp,ep:0,uses:{},effects:[],morale:0,tokens:0,extra:0,front:u.front,played:0,reinforced:null,immPending:null,dp:u.dpMax||0,hp:u.hpMax||0,dpBroken:false,down:false})),
+    enemy:freshEnemyState(enemy),
+    field:null,territory:null,turnDamage:[0],totalDamage:0,log:opt.trace?[]:null,
+    skillDamageByElement:opt.trackElements||opt.teamElement?{}:null,
+    acted:0,killedTurn:0,passiveCount:{},shownDamage:0,phaseShownStart:0,phaseDamageStart:0, // shownDamage：画面显示的伤害（含溢出），遭遇战伤害分用
+    mods:{drGain:0,odGain:0,minOd:1,attackUpRule:0,spDamageFront:null},
+    flags:opt.flags||{unsupported:{},approx:{}},
+  };
+  st.ctx={party,enemy,opt,statusTypes:opt.statusTypes||{}};
+  st.trans=initialTranscend(party,opt);
+  for(const r of enemy.rules||[])if(r.type==='LimitMinOverDriveLv')st.mods.minOd=Number(r.arg)||1;
+  applyRules(st,'OnBattleStart');
+  st.odGainMult=1+(st.mods.odGain||0);
+  firePassives(st,'battleStart');
+  return st;
+}
+
+export function cloneState(s){
+  return {
+    ...s,
+    skillDamageByElement:s.skillDamageByElement?{...s.skillDamageByElement}:null,
+    units:s.units.map(u=>({...u,uses:{...u.uses},effects:u.effects.map(e=>({...e}))})),
+    enemy:{...s.enemy,dp:s.enemy.dp.slice(),effects:s.enemy.effects.map(e=>({...e})),ptr:{...s.enemy.ptr},once:{...s.enemy.once}},
+    field:s.field?{...s.field}:null,territory:s.territory?{...s.territory}:null,trans:s.trans?{...s.trans}:null,turnDamage:s.turnDamage.slice(),log:s.log?s.log.slice():null,
+    passiveCount:{...s.passiveCount},mods:{...s.mods},flags:s.flags,ctx:s.ctx,cards:s.cards?new Set(s.cards):undefined,
+    ...cloneQueue(s),
+  };
+}
+function cloneQueue(s){
+  if(!s.queue)return {};
+  const queue=s.queue.map(q=>({...q,state:q.state===s.enemy?null:cloneEnemyState(q.state)}));
+  const enemy=cloneEnemyState(s.enemy);queue[s.qi].state=enemy;
+  return {queue,enemy};
+}
+function cloneEnemyState(e){return {...e,dp:e.dp.slice(),effects:e.effects.map(x=>({...x})),ptr:{...e.ptr},once:{...e.once}};}
+
+function flag(st,kind,key){const b=st.flags[kind];b[key]=(b[key]||0)+1;}
+
+// ---------------------------------------------------------------- 超越ゲージ / 属性の印 / OD 取整
+
+const round2=x=>Math.round(x*100)/100;
+// 截到 0.01%（社区 Planner Cs/xs 的 floor(x×100)/100；加 1e-7 防浮点把 3.00 截成 2.99）
+const floorOd=x=>Math.floor(x*100+1e-7)/100;
+// 直充 OD（技能/被动的 OverDrivePointUp）：比例×系数×10000 后四舍六入五成双（OD与破坏率计算表 261011 的 ODPOINTBYRATE）
+const roundEven=x=>{const n=Math.floor(x),f=x-n;return f<0.5-1e-9?n:f>0.5+1e-9?n+1:(n%2===0?n:n+1);};
+const directOd=x=>roundEven(x*100)/100;
+/** OD 量表增减：结果保留 0.01%（社区 Planner 每次增量都截到 0.01），上限 300。 */
+function addOd(st,v){st.od=Math.max(0,Math.min(R.OD_MAX,round2(st.od+v)));}
+// 虚属性（Void，成瀨光〈泰然自若的獵人〉）视同拥有火冰雷光暗 5 种属性（用户 2026-11-09 确认）
+const ELEMENTS5=['fire','ice','thunder','light','dark'];
+export const hasElement=(m,el)=>m.elements.includes(el)||(ELEMENTS5.includes(el)&&m.elements.includes('void'));
+const elementCount=(party,el)=>party.filter(p=>hasElement(p,el)).length;
+
+/** 有 ADMIRAL「X の律動」时建超越量表：初期 = 该属性人数 ×15%（≤90%）。opt.transcendInitial 可覆盖。 */
+function initialTranscend(party,opt){
+  const holder=party.find(p=>p.transcend);
+  if(!holder)return null;
+  const el=holder.transcend;
+  const g=opt.transcendInitial??Math.min(R.TRANSCEND_INITIAL_MAX,elementCount(party,el)*R.TRANSCEND_PER_MEMBER);
+  return {element:el,gauge:g,active:g>=100,holder:holder.i,activatedTurn:g>=100?0:null};
+}
+/** 该属性卡面行动一次：+4%；到 100% 发动（OD +100%，仅一次），之后整场生效。 */
+function chargeTranscend(st,i){
+  const T=st.trans;
+  if(!T||T.active||!hasElement(st.ctx.party[i],T.element))return;
+  T.gauge=Math.min(100,T.gauge+R.TRANSCEND_PER_ACTION);
+  if(T.gauge>=100){
+    T.active=true;T.activatedTurn=st.turn;addOd(st,R.TRANSCEND_EFFECT.od);
+    // 到 100% 的那次行动本身不吃超越效果，下一次行动起生效（用户经验 2026-11-09）
+    if(st.log)st.log.push({t:'transcend',turn:st.turn,element:T.element});
+  }
+}
+/** 成员 i 是否受超越效果（量表已发动且是该属性卡面）。 */
+const transcendFor=(st,i)=>!!(st.trans?.active&&hasElement(st.ctx.party[i],st.trans.element));
+/** 成员 i 身上属性の印的等级（印只给该属性卡面；等级 = 部队里该属性人数）。返回 {element,level}|null */
+function markOf(st,i){
+  const mk=st.units[i].effects.find(e=>e.type==='mark');
+  return mk?{element:mk.element,level:mk.level}:null;
+}
+
+// ---------------------------------------------------------------- 条件
+
+const STATUS_BY_TYPE={AdditionalTurn:'extra',BuffCharge:'charge',Funnel:'consecutiveHit',Zone:'field',MindEye:'mindsEye',AttackUp:'attackUp',
+  DefenseDown:'defenseDown',Fragile:'fragile',ShadowClone:'shadowClone',EternalOath:'eternalOath',YamawakiMinion:'yamawakiMinion',CriticalRateUp:'critRateUp',CriticalDamageUp:'critDamageUp',ResistDown:'resistanceDown'};
+
+// 以“状态”形式记录、供条件判断的部件类型（数值效果另行处理或未建模）
+const STATUS_PARTS=new Set(['Diva','FightingSpirit','Makeup','NegativeMind','Mocktail','DimSum','Curry','Gelato','Shchi','Sprightly','Disaster','Inscription','Infantilized','Venom','Steak','Tea','Shredding','Talisman','BIYamawakiServant','ShadowClone','EternalOath','Undermine','FearOfDevil','RiceFieldZone']);
+const KNOWN_STATUS=new Set([...STATUS_PARTS,'IceMark','FireMark','ThunderMark','LightMark','DarkMark']);
+const enemyStatus=(st,name)=>st.enemy.effects.find(e=>e.status===name);
+// 条件函数表只建一次（原先每次条件判断都新建约 50 个闭包，占搜索 ~14% 时间）；当前状态经 CF_st / CF_extra 传入，check() 负责设置与恢复
+let CF_st=null,CF_extra={};
+const CF_WRAP=(()=>{
+  const U=e=>e.side==='enemy'?null:CF_st.units[e.i],M=e=>e.side==='enemy'?null:CF_st.ctx.party[e.i];
+  const statusCount=(e,type)=>{
+    const name=String(CF_st.ctx.statusTypes?.[type]||type);
+    if(e.side==='enemy'){
+      const t=STATUS_BY_TYPE[name];
+      return t?CF_st.enemy.effects.filter(x=>x.type===t).length:CF_st.enemy.effects.filter(x=>x.status===name).length;
+    }
+    if(name==='AdditionalTurn')return U(e).extra;
+    if(name==='Zone')return CF_st.field?1:0;
+    const t=STATUS_BY_TYPE[name];
+    if(t)return U(e).effects.filter(x=>x.type===t).length;
+    const n=U(e).effects.filter(x=>x.status===name).length;   // 命名状态（Diva、FightingSpirit、料理状态等）
+    if(!n&&!KNOWN_STATUS.has(name))flag(CF_st,'approx','状态类型未建模:'+name);
+    return n;
+  };
+  const f={
+    IsFront:e=>e.side!=='enemy'&&U(e).front,IsPlayer:e=>e.side!=='enemy',IsDead:()=>false,
+    IsCharacter:(e,A)=>e.side!=='enemy'&&M(e).charId===A.val(0),IsTeam:(e,A)=>e.side!=='enemy'&&M(e).team===String(A.val(0)),
+    IsRole:(e,A)=>e.side!=='enemy'&&String(M(e).role).toLowerCase()===String(A.val(0)).toLowerCase(),
+    IsNatureElement:(e,A)=>e.side!=='enemy'&&hasElement(M(e),String(A.val(0)).toLowerCase()),
+    IsWeakElement:(e,A)=>(CF_st.ctx.enemy.weaknesses.element[String(A.val(0)).toLowerCase()]??100)>100,
+    DpRate:()=>1,Sp:e=>e.side==='enemy'?0:U(e).sp,Ep:e=>e.side==='enemy'?0:U(e).ep,Token:e=>e.side==='enemy'?0:U(e).tokens,
+    MoraleLevel:e=>e.side==='enemy'?0:U(e).morale,MotivationLevel:()=>3,
+    SpecialStatusCountByType:(e,A)=>statusCount(e,A.val(0)),
+    CountBC:(e,A)=>{let n=0;for(const u of CF_st.units)if(A.ev(A.raw[0],{side:'ally',i:u.i}))n++;if(A.ev(A.raw[0],{side:'enemy',i:0}))n++;return n;},
+    IsOverDrive:()=>CF_st.odRounds>0,OverDriveGauge:()=>CF_st.od,IsBroken:()=>CF_st.enemy.broken,
+    BreakDownTurn:()=>0,TargetBreakDownTurn:()=>0,
+    IsZone:(e,A)=>{const z=String(A.val(0)).toLowerCase();return z==='none'?!CF_st.field:CF_st.field?.element===z;},
+    IsTerritory:(e,A)=>CF_st.territory?.name===String(A.val(0)),IsCharging:e=>e.side!=='enemy'&&U(e).effects.some(x=>x.type==='charge'),Turn:()=>CF_st.turn,
+    DamageRate:()=>CF_st.enemy.dr,IsHitWeak:()=>!!CF_extra.weak,BreakHitCount:()=>CF_extra.breakHits||0,IsAttackNormal:()=>!!CF_extra.normal,
+    ConsumeSp:()=>CF_extra.sp??0,RemoveDebuffCount:()=>CF_extra.removeDebuffCount||0,
+    AdditionalHitCount:(e,A)=>e.side==='enemy'?0:(CF_st.passiveCount[String(A.val(0))+':'+e.i]||0),
+    ConquestBikeLevel:()=>Number(CF_st.ctx.opt.conquestBikeLevel)||0,InfantilizedLevel:()=>enemyStatus(CF_st,'Infantilized')?.level||0,
+    HasSkill:(e,A)=>e.side!=='enemy'&&M(e).skills.some(s=>s.label===String(A.val(0))),
+    // 成瀨〈泰然自若的獵人〉角色能力「無念無想」的【没入（沉浸）】状态。没入的增益与属性切换不在公开主数据里，未建模：始终视为未没入（技能按无属性、走非没入分支）
+    IsReinforcedMode:e=>e.side!=='enemy'&&!!U(e).reinforced,
+    IceMarkLevel:e=>markLevel(CF_st,e,'IceMark'),FireMarkLevel:e=>markLevel(CF_st,e,'FireMark'),ThunderMarkLevel:e=>markLevel(CF_st,e,'ThunderMark'),
+    LightMarkLevel:e=>markLevel(CF_st,e,'LightMark'),DarkMarkLevel:e=>markLevel(CF_st,e,'DarkMark'),PlayedSkillCount:e=>e.side==='enemy'?0:U(e).played,Random:()=>0.5,
+  };
+  const wrap={};
+  for(const [k,fn] of Object.entries(f))wrap[k]=(env,args,ev)=>fn(env,{raw:args,ev,val:i=>{const n=args[i];return !n?undefined:n.k==='id'?n.v:ev(n,env);}});
+  return wrap;
+})();
+function markLevel(st,e,type){const u=e.side==='enemy'?null:st.units[e.i];const m=u?.effects.find(x=>x.status===type);return m?m.level||0:0;}
+function check(st,expr,i,extra){
+  if(!expr||expr==='Equipped')return true;
+  const ps=CF_st,pe=CF_extra;CF_st=st;CF_extra=extra||{};
+  try{return evaluate(expr,{side:'ally',i},CF_WRAP);}
+  catch(err){flag(st,'unsupported',err instanceof UnsupportedCondition?'条件:'+err.fn:'条件语法');return false;}
+  finally{CF_st=ps;CF_extra=pe;}
+}
+
+// ---------------------------------------------------------------- 目标
+
+function targetsOf(st,actor,part,chosen){
+  const t=part.targetType||'Self',front=st.units.filter(u=>u.front).map(u=>u.i);
+  switch(t){
+    case 'Self':case 'None':return [actor];
+    case 'AllyAll':return st.units.map(u=>u.i);
+    case 'AllyAllWithoutSelf':return st.units.map(u=>u.i).filter(i=>i!==actor);
+    case 'AllyFront':return front;
+    case 'AllyFrontWithoutSelf':return front.filter(i=>i!==actor);
+    case 'AllySub':return st.units.filter(u=>!u.front).map(u=>u.i);
+    case 'AllySingle':case 'AllySingleWithoutSelf':{
+      if(chosen!=null&&(t==='AllySingle'||chosen!==actor))return [chosen];
+      const pool=front.filter(i=>t==='AllySingle'||i!==actor);
+      return pool.length?[pool.sort((a,b)=>attackPotential(st,b)-attackPotential(st,a))[0]]:[];
+    }
+    case 'Field':return ['field'];
+    default:return ['enemy'];
+  }
+}
+function attackPotential(st,i){
+  return Math.max(0,...st.ctx.party[i].skills.map(s=>(s.parts||[]).filter(p=>ATTACK_PART_TYPES.has(p.skillType)).reduce((m,p)=>Math.max(m,(p.power?.[1]||0)),0)));
+}
+
+// ---------------------------------------------------------------- 效果实例
+
+// 持续：Count = 次数；PlayerTurnEnd/EnemyTurnEnd = 回合数；Eternal = 永久；其它 = 仅本行动轮（同 Planner Un/na）
+function duration(part){
+  const e=part.exit||{cond:'None',value:[0,0]};
+  if(e.cond==='Eternal')return {uses:null,turns:null,currentOnly:false};
+  const n=Math.max(1,Math.ceil(Number(e.value?.[0])||1));
+  if(e.cond==='Count')return {uses:n,turns:null,currentOnly:false};
+  if(e.cond==='PlayerTurnEnd'||e.cond==='EnemyTurnEnd')return {uses:null,turns:n,currentOnly:false};
+  if(e.cond==='OverDriveEnd')return {uses:null,turns:null,currentOnly:false,odEnd:true};
+  return {uses:null,turns:null,currentOnly:true};
+}
+
+function addEffect(list,eff){
+  eff.id=++effSeq;
+  // 同一来源的 Only 效果覆盖；领域只留最新（Planner Ml）
+  if(eff.limitType==='Once'||eff.only)for(let k=list.length-1;k>=0;k--)if(list[k].src===eff.src&&list[k].type===eff.type)list.splice(k,1);
+  list.push(eff);
+  return eff;
+}
+
+/** 按增益槽规则取生效的实例：同组容量 2（[单独发动] 占 2），其余 1；被动不占槽。 */
+function slotSelect(list,type,capacity){
+  const c=capacity??(R.DOUBLE_SLOT_BUFFS.includes(type)||R.DOUBLE_SLOT_DEBUFFS.includes(type)?2:1);
+  const items=list.filter(e=>e.type===type&&!e.passive).sort((a,b)=>b.size-a.size);
+  const out=[];let used=0;
+  for(const e of items){const cost=e.limitType==='Once'?c:1;if(used+cost>c)continue;out.push(e);used+=cost;if(used>=c)break;}
+  return out;
+}
+const sumSize=list=>list.reduce((s,e)=>s+e.size,0);
+
+// ---------------------------------------------------------------- 被动
+
+const TIMING={
+  battleStart:t=>t==='OnBattleStart'||t==='OnFirstBattleStart',
+  normalTurnStart:t=>t==='OnPlayerTurnStart'||t==='OnEveryTurnIncludeSpecial'||t==='OnEveryTurn',
+  playerTurnStart:t=>t==='OnPlayerTurnStart'||t==='OnEveryTurnIncludeSpecial',
+  overdriveStart:t=>t==='OnOverdriveStart',
+  additionalTurnStart:t=>t==='OnAdditionalTurnStart',
+};
+// 被动里会触发的“额外命中”类：由动作事件触发，不按时机触发
+const EVENT_PASSIVE=/^AdditionalHitOn/;
+
+// 同一被动（同 label）由多名成员携带、且作用于他人时只生效一次（2026-11-09 训练场：立華奏、小笠原两份「冰之波動」按一份才吻合，推定）
+function duplicatePassive(st,i,p){
+  if(!R.DEDUPE_SHARED_PASSIVES||!p.label||(p.parts||[]).every(x=>!x.targetType||x.targetType==='Self'))return false;
+  return st.ctx.party.some(u=>u.i<i&&u.passives.some(q=>q.label===p.label));
+}
+function firePassives(st,when,filter){
+  for(const u of st.ctx.party){
+    for(const p of u.passives){
+      if(!TIMING[when](p.timing))continue;
+      if(duplicatePassive(st,u.i,p))continue;
+      if((p.parts||[]).some(x=>EVENT_PASSIVE.test(x.skillType)))continue;
+      if(filter&&!filter(p,u))continue;
+      firePassive(st,u.i,p);
+    }
+  }
+}
+function firePassive(st,i,p,extra={}){
+  if(p.limit>0&&(st.passiveCount[p.label+':'+i]||0)>=p.limit)return false;
+  if(p.condition&&!check(st,p.condition,i,extra))return false;
+  if(p.rate&&p.rate<100)flag(st,'approx','概率被动按必定触发');
+  st.passiveCount[p.label+':'+i]=(st.passiveCount[p.label+':'+i]||0)+1;
+  for(const part of p.parts||[])applyPart(st,i,{label:p.label,name:p.name,skillLabel:p.skillLabel,level:1,maxLevel:1,parts:p.parts},part,{...extra,passive:true});
+  return true;
+}
+
+// ---------------------------------------------------------------- 部件解释
+
+const NEUTRAL=new Set(['HealDp','HealDpByDamage','Cover','RemoveDebuff','AttackDown',
+  'StunRandom','ConfusionRandom','ImprisonRandom','RecoilRandom','HealSkillUsedCount','SelfDamage','DebuffGuard','GiveHealUp','Motivation','RemoveSpecialStatus',
+  'BreakDownTurnUp','HealDown','Invincible','Talisman','RemoveBuff','Dodge','Revenge','EAGuard','BreakGuard','DefenseUpPerToken','BorderRefPDownByAdmiral','HealEp','IgnoreEShieldElement','HealSpOnPreTurn','TokenSetByAttacked','ToughnessUpValuePerRevengeLevel','ReviveTerritory','ForceOneDamageByHit','TokenChangeTimeline','SpecialCommandCountUp','ExecuteSkillOnPreTurn','HealUp','Nothing']);
+
+function casterOpts(st,actor,model){
+  const u=st.ctx.party[actor],pb=passiveBonus(st,actor);
+  const tear=(t)=>u.tearType===t?u.tearLevel:0;
+  // 超越ゲージ 100%：该属性卡面施放的 攻击力アップ类效果量 +20%、减益效果量 +20%（按被动强化同组相加，推定）
+  const tr=transcendFor(st,actor);
+  if(model.kind==='buff')return {tearBuffUp:tear('BuffUp'),tearCritRateUp:tear('CriticalRateUp'),passiveStrengthen:isAttackBuff(model.type)?pb.attackBuffUp+(tr?R.TRANSCEND_EFFECT.attackBuffUp:0):0,
+    supportStrengthen:isAttackBuff(model.type)?activeStrengthen(st,actor):0};
+  return {tearDebuffUp:tear('DebuffUp'),passiveStrengthen:(isStrengthenableDebuff(model.type)?pb.debuffUp+(tr?R.TRANSCEND_EFFECT.debuffUp:0):0)+(isDefenseDebuff(model.type)?pb.defenseDebuffUp:0)};
+}
+
+function applyPart(st,actor,skill,part,info){
+  const type=part.skillType;
+  // DamageRateChangeAttackSkill 的 cond（IsHitWeak()）是“命中弱点时威力/破坏率变化”的条件，由伤害模型处理，不是发动条件
+  if(part.cond&&type!=='SkillCondition'&&type!=='SkillSwitch'&&type!=='DamageRateChangeAttackSkill'&&!check(st,part.cond,actor,info))return;
+  if(part.hitCondition&&!check(st,part.hitCondition,actor,info))return;
+  if(type==='SkillCondition'||type==='SkillSwitch'){
+    const br=part.branches||[];
+    const pick=check(st,part.cond||skill.cond,actor,info)?br[0]:br[1]||br[0];
+    if(!pick){flag(st,'unsupported','分支技能缺数据');return;}
+    runParts(st,actor,{...pick,level:skill.level,hits:pick.hits||skill.hits,maxLevel:pick.maxLevel||skill.maxLevel},info);
+    return;
+  }
+  if(type==='SkillRandom'){flag(st,'approx','SkillRandom 取第一个分支');const br=part.branches?.[0];if(br)runParts(st,actor,{...br,level:skill.level},info);return;}
+  if(ATTACK_PART_TYPES.has(type)){doAttack(st,actor,skill,part,info);return;}
+  const model=effectModel(skill,part);
+  const meta=st.ctx.party[actor];
+  if(model){
+    const dur=duration(part),level=Math.min(skill.level||1,model.effects.min.length);
+    if(model.kind==='buff'){
+      for(const t of targetsOf(st,actor,part,info.target)){
+        if(t==='field'){if(model.type==='elementField'){st.field={element:model.element,size:model.effects.max[0],owner:actor,turns:st.mods.zoneRule?null:dur.turns,src:skill.label};cardFieldSet(st,info);}continue;}
+        if(typeof t!=='number')continue;
+        if(part.targetCondition&&!check(st,part.targetCondition,t,info))continue;
+        const sz=buffSize(model,level,meta.stats,casterOpts(st,actor,model));
+        const eff={type:model.type,element:model.element,size:sz.total,limitType:model.limitType,src:skill.label,owner:actor,passive:!!info.passive,includeNormal:!!model.includeNormal,...dur};
+        if(model.type==='consecutiveHit')eff.ratios=model.effects.max.map(x=>x/100);
+        if(model.type==='charge')eff.critRate=model.chargeCritRate?.[Math.max(0,Math.min(model.chargeCritRate.length-1,level-1))]||0;
+        addEffect(st.units[t].effects,eff);
+      }
+      if(model.type==='elementField'&&part.targetType!=='Field'){st.field={element:model.element,size:model.effects.max[0],owner:actor,turns:st.mods.zoneRule?null:dur.turns,src:skill.label};cardFieldSet(st,info);}
+    }else{
+      if(part.targetCondition&&!check(st,part.targetCondition,actor,info))return;
+      const sz=debuffSize(model,level,meta.stats,st.ctx.enemy.border,casterOpts(st,actor,model));
+      const dt={...dur};if(!info.passive&&dt.turns!=null)dt.turns+=passiveBonus(st,actor).debuffTurnUp; // 减益延长（被动/特性除外）
+      addEffect(st.enemy.effects,{type:model.type,element:model.element,size:sz.total,limitType:model.limitType,src:skill.label,owner:actor,
+        passive:!!info.passive,permanent:!!model.isPermanent,...dt});
+    }
+    return;
+  }
+  switch(type){
+    case 'HealSp':{
+      const v=part.power?.[0]||0;
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'&&(!part.targetCondition||check(st,part.targetCondition,t,info))){
+        healSp(st,t,v,info.passive?null:actor);
+      }
+      return;
+    }
+    case 'HealEp':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')healEp(st,t,part.power?.[0]||0);
+      return;
+    case 'EpLimitOverwrite':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'epLimit',size:part.power?.[0]||10,src:skill.label,owner:actor,...duration(part)});
+      return;
+    case 'OverwriteSp':{
+      const skillLabel=overwriteSkillLabel(st,actor,skill);
+      if(!skillLabel)return;
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'overwriteSp',skillLabel,size:part.power?.[0]||0,src:skill.label,owner:actor,...duration(part)});
+      return;
+    }
+    case 'HealDp':{
+      // DP 回复（回復能力按施放者能力插值）；主动回复另触发：幼儿回归 +1、受回复者得象征。
+      {const amt=healAmount(st,actor,skill,part);for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')healDp(st,t,amt,part);}
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'&&!info.passive){
+        for(const p of st.ctx.party[t].passives)for(const q of p.parts||[])if(q.skillType==='TokenSetByHealedDp')
+          st.units[t].tokens=Math.min(R.MORALE_TOKEN_STACK_MAX,st.units[t].tokens+(q.power?.[0]||1));
+      }
+      if(!info.passive&&enemyStatus(st,'Infantilized'))raiseEnemyLevel(st,'Infantilized',1,20,skill,part);
+      return;
+    }
+    case 'HealDpRate':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')healDp(st,t,(part.power?.[0]||0)*st.ctx.party[t].dpMax,part);return;
+    case 'RegenerationDp':{const amt=healAmount(st,actor,skill,part),d=duration(part);
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'regen',size:amt,src:skill.label,owner:actor,...d});return;}
+    case 'ReviveDp':case 'ReviveDpRate':{
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'){
+        const u=st.units[t],m=st.ctx.party[t],amt=type==='ReviveDpRate'?(part.power?.[0]||0)*m.dpMax:healAmount(st,actor,skill,part);
+        if(u.dpBroken){u.dpBroken=false;u.dp=0;if(st.log)st.log.push({t:'revive',turn:st.turn,unit:t});} // 复活：解除倒下并回复 DP
+        healDp(st,t,amt,part);
+      }
+      return;}
+    case 'DefenseUp':{
+      const d=duration(part),size=defenseSize(st,actor,skill,part);
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')
+        addEffect(st.units[t].effects,{type:'defenseUp',size,src:skill.label,owner:actor,passive:!!info.passive&&part.exit?.cond==='Eternal',limitType:part.limitType,enemyEnd:part.exit?.cond==='EnemyTurnEnd',...d});
+      return;}
+    case 'Provoke':{const d=duration(part);addEffect(st.units[actor].effects,{type:'provoke',size:0,src:skill.label,owner:actor,enemyEnd:true,...d,turns:Math.max(1,Math.round(part.power?.[0]||1))});return;}
+    case 'RemoveDebuff':{
+      let left=part.power?.[0]>0?Math.floor(part.power[0]):Infinity;
+      for(const t of targetsOf(st,actor,part,info.target)){
+        if(typeof t!=='number')continue;
+        const keep=[];
+        for(const e of st.units[t].effects){
+          if(left>0&&isAllyDebuff(e)){left--;info.removeDebuffCount=(info.removeDebuffCount||0)+1;}
+          else keep.push(e);
+        }
+        st.units[t].effects=keep;
+      }
+      return;
+    }
+    case 'Infantilized':raiseEnemyLevel(st,'Infantilized',part.power?.[0]||0,20,skill,part);return;
+    case 'Disaster':raiseEnemyLevel(st,'Disaster',part.power?.[0]||0,99,skill,part);return;
+    case 'Venom':{
+      const old=enemyStatus(st,'Venom'),d=duration(part);
+      if(old){old.level=Math.min(10,(old.level||0)+(part.power?.[0]||0));Object.assign(old,d);}
+      else addEffect(st.enemy.effects,{type:'status',status:'Venom',level:Math.min(10,part.power?.[0]||0),statDown:0,bornTurn:st.turn,size:0,src:skill.label,owner:actor,...d});
+      return;
+    }
+    case 'Inscription':
+      if(!enemyStatus(st,'Inscription'))addEffect(st.enemy.effects,{type:'status',status:'Inscription',damage:0,size:0,src:skill.label,owner:actor,...duration(part)});
+      return;
+    case 'InscriptionAttack':releaseInscription(st,skill,info);return;
+    case 'ByakkoDoubleActionAttackSkill':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'byakkoDoubleAction',size:0,src:skill.label,owner:actor,...duration(part)});
+      return;
+    case 'ReplaceNormalSkill':case 'ReplacePursuit':case 'TokenSetByHealedDp':return; // 由普攻、追击、DP 回复事件直接读取被动
+    case 'Steak':case 'Tea':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'){
+        st.units[t].effects=st.units[t].effects.filter(e=>e.status!==type);
+        addEffect(st.units[t].effects,{type:'foodAttack',status:type,size:(part.power?.[0]||0)*100,src:skill.label,owner:actor,passive:true,...duration(part)});
+      }
+      flag(st,'approx',type+' 的 DP 吸收未计（我方 DP 未建模）');return;
+    case 'Shredding':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'status',status:'Shredding',size:0,src:skill.label,owner:actor,...duration(part)});
+      return;
+    case 'SummersEndTerritory':{
+      const existed=st.territory?.name==='SummersEndTerritory';info.summersOpened=!existed;
+      if(!existed)st.territory={name:'SummersEndTerritory',active:false,owner:actor,src:skill.label};
+      return;
+    }
+    case 'AttackUpRangeByAllDamageRate':{
+      if(info.summersOpened||st.territory?.name!=='SummersEndTerritory')return;
+      st.territory.active=true;
+      // 公开资料只确认 50%～250% 与破坏率相关；精确分段尚未取得，暂以 100%→50、500%→250 线性近似。
+      const size=Math.max(50,Math.min(250,50+50*(st.enemy.dr-1)));
+      flag(st,'approx','晚夏之阵攻击增益按破坏率线性近似');
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'){
+        st.units[t].effects=st.units[t].effects.filter(e=>e.type!=='summerAttack');
+        addEffect(st.units[t].effects,{type:'summerAttack',size,src:skill.label,owner:actor,passive:true,uses:null,turns:3,currentOnly:false});
+      }
+      return;
+    }
+    case 'HealSpRandom':{const p=Math.min(1,part.power?.[1]?(part.power[0]+part.power[1])/2:part.power?.[0]||0),v=part.value?.[0]||0;flag(st,'approx','HealSpRandom 按期望值');
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')healSp(st,t,p*v,null);return;}
+    case 'OverDrivePointUp':{const mult=info.odMult||1;addOd(st,directOd((part.power?.[0]||0)*100*mult));return;}
+    case 'OverDrivePointDown':addOd(st,-(part.power?.[0]||0)*100);return;
+    case 'AdditionalTurn':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'&&(!part.targetCondition||check(st,part.targetCondition,t,info)))st.units[t].extra=1;
+      return;
+    case 'TokenSet':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')st.units[t].tokens=Math.min(R.MORALE_TOKEN_STACK_MAX,st.units[t].tokens+Math.max(1,Math.round(part.power?.[0]||1)));return;
+    case 'Morale':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')st.units[t].morale=Math.min(R.MORALE_TOKEN_STACK_MAX,st.units[t].morale+(part.power?.[0]||0));return;
+    case 'ZoneUpEternal':if(st.field&&st.field.owner===actor){st.field.size+=(part.power?.[0]||0)*100;st.field.turns=null;}else st.mods.zoneUp=(st.mods.zoneUp||0)+(part.power?.[0]||0)*100;return;
+    case 'DamageUpByOverDrive':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'odDamage',size:(part.power?.[0]||0)*100,src:skill.label,owner:actor,passive:true,...duration(part)});return;
+    case 'PowerUpValue':case 'DexterityUpValue':case 'ToughnessUpValue':case 'SpiritUpValue':case 'WisdomUpValue':case 'LuckUpValue':case 'AllStatusUpValue':{
+      const stat={PowerUpValue:'str',DexterityUpValue:'dex',ToughnessUpValue:'con',SpiritUpValue:'spr',WisdomUpValue:'wis',LuckUpValue:'luk',AllStatusUpValue:'all'}[type];
+      const d=duration(part);if(d.uses==null&&d.turns==null&&!d.currentOnly&&part.exit?.cond==='Eternal'&&info.passive)return; // 常驻型已在 passiveBonus
+      const m={effects:powerTable(part,skill),paramLimit:part.diffForMax||0,parameters:part.parameters||{}};
+      const v=part.diffForMax?buffSize({...m,type:'statUp',maxLevel:skill.maxLevel||1},skill.level||1,meta.stats,{}).total:(part.power?.[0]||0);
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'statUp',stat,size:v,src:skill.label,owner:actor,passive:!!info.passive,...d});
+      return;}
+    case 'FightingSpirit':{ // 斗志：全能力 +dv，持续 power[0] 回合（Planner/计算器未建模；按说明“激發鬥志N回合”）
+      const turns=Math.max(1,Math.round(part.power?.[0]||1));
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'statUp',stat:'all',status:'FightingSpirit',size:part.dv||20,src:skill.label,owner:actor,uses:null,turns,currentOnly:false});
+      flag(st,'approx','斗志按 全能力+'+(part.dv||20)+' 计');return;}
+    case 'AttackUpPerToken':case 'DamageRateUpPerToken':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:type==='AttackUpPerToken'?'attackUp':'destructionRateUp',perToken:true,size:(part.power?.[0]||0)*100,src:skill.label,owner:actor,passive:true,...duration(part)});
+      return;
+    case 'IceMark':case 'FireMark':case 'ThunderMark':case 'LightMark':case 'DarkMark':
+      for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'&&(!part.targetCondition||check(st,part.targetCondition,t,info))&&!st.units[t].effects.some(e=>e.status===type))
+      {const el=type.replace('Mark','').toLowerCase();
+        // 印只给该属性卡面；等级 = 部队里该属性卡面数（Game8 756880 / katorasublog 4458）
+        if(!hasElement(st.ctx.party[t],el))continue;
+        addEffect(st.units[t].effects,{type:'mark',status:type,element:el,level:elementCount(st.ctx.party,el),size:0,src:skill.label,owner:actor,uses:null,turns:null,currentOnly:false});}
+      return;
+    case 'OverDrivePointUpRandom':addOd(st,(part.power?.[0]||0)*(part.value?.[0]||0)*100);flag(st,'approx','概率 OD 上升按期望值');return;
+    case 'TokenSetByAttacking':case 'ZoneUp':case 'GiveDebuffTurnUp':return; // 由 passiveBonus / 攻击事件处理
+    case 'FixedHpDamageRate':{
+      if(st.enemy.dp.some(g=>g>0))return;
+      const d=Math.min(part.value?.[0]||Infinity,(part.power?.[0]||0)*st.enemy.hp);
+      st.enemy.hp-=d;st.turnDamage[st.turn]=(st.turnDamage[st.turn]||0)+d;st.totalDamage+=d;st.shownDamage=(st.shownDamage||0)+d;info.damage=(info.damage||0)+d;
+      if(st.enemy.hp<=0&&!st.killedTurn){st.enemy.hp=0;st.killedTurn=st.turn;}
+      return;}
+    case 'DoubleActionExtraSkill':{const d=duration(part);for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'doubleAction',size:0,src:skill.label,owner:actor,...d});return;}
+    case 'DamageSp':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')st.units[t].sp=Math.max(0,st.units[t].sp-(part.power?.[0]||0));return;
+    case 'SpecifySp':for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')st.units[t].spSetNext=Math.max(st.units[t].spSetNext??0,part.power?.[0]||0);return;
+    case 'OverDrivePointUpByToken':{const n=st.units[actor].tokens||0;addOd(st,directOd(n*(part.power?.[0]||0)*100*(info.odMult||1)));info.consumeTokens=true;return;}
+    case 'HealSpByToken':{const n=st.units[actor].tokens||0,cap=part.value?.[0]||R.SP_CAP;for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')st.units[t].sp=Math.max(st.units[t].sp,Math.min(cap,st.units[t].sp+n*(part.power?.[0]||0)));info.consumeTokens=true;return;}
+    case 'AttackUpByToken':{const n=st.units[actor].tokens||0;if(n>0)for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number')addEffect(st.units[t].effects,{type:'attackUp',size:n*(part.power?.[0]||0)*100,src:skill.label,owner:actor,...duration(part)});info.consumeTokens=true;return;}
+    case 'SkillLimitCountUp':case 'ReduceConsumeOverDrive':return; // 在 usableSkills / startOverdrive 里按被动汇总
+    case 'ReduceSp':case 'HighBoost':return; // 消耗减少在 effectiveCost 里按被动统一计算
+    case 'GiveAttackBuffUp':case 'GiveDebuffUp':case 'GiveDefenseDebuffUp':case 'AllStatusUpValue':case 'MemorySpirit':case 'SpLimitOverwrite':return; // 被动常驻量在 passiveBonus 里汇总
+  }
+  if(NEUTRAL.has(type))return;
+  if(STATUS_PARTS.has(type)){
+    for(const t of targetsOf(st,actor,part,info.target))if(typeof t==='number'&&(!part.targetCondition||check(st,part.targetCondition,t,info)))
+      addEffect(st.units[t].effects,{type:'status',status:type,size:0,src:skill.label,owner:actor,limitType:'Once',...duration(part)});
+    if(!['Diva','BIYamawakiServant'].includes(type))flag(st,'approx','状态只记录、数值效果未建模:'+type);
+    return;
+  }
+  if(/^AdditionalHitOn/.test(type))return; // 事件被动的触发标记，见 firePassiveEvents
+  flag(st,'unsupported','效果:'+type);
+}
+
+function overwriteSkillLabel(st,actor,skill){
+  const meta=st.ctx.party[actor],p=meta.passives.find(x=>x.label===skill.label),source=skill.skillLabel||p?.skillLabel;
+  // 嵌入被动的来源技能可能就是目标；若来源本身是 PassiveSkill，则继续按唯一限定 EX 推断。
+  if(source&&meta.skills.some(s=>s.label===source&&!s.passive))return source;
+  // 纯被动没有目标字段：仅在该卡面唯一限定 EX 时推断；多 EX 时宁可不套用，也不覆写全部技能。
+  const candidates=meta.skills.filter(s=>s.ownStyle&&s.restricted&&!s.passive);
+  if(candidates.length===1)return candidates[0].label;
+  flag(st,'approx','OverwriteSp 目标无法唯一推断:'+skill.label);
+  return null;
+}
+function isAllyDebuff(e){
+  return e.debuff===true||['attackDown','defenseDown','critRateDown','critDamageDown','resistanceDown','statDown'].includes(e.type)
+    ||['NegativeMind','Undermine','FearOfDevil','Stun','Confusion','Imprison','Recoil'].includes(e.status);
+}
+function raiseEnemyLevel(st,name,delta,cap,skill,part){
+  if(!(delta>0))return;
+  let e=enemyStatus(st,name);
+  if(!e)e=addEffect(st.enemy.effects,{type:'status',status:name,level:0,size:0,src:skill.label,owner:skill.owner??0,...duration(part)});
+  e.level=Math.min(cap,(e.level||0)+delta);e.size=e.level;
+}
+function epLimit(st,t){
+  return Math.max(10,...st.units[t].effects.filter(e=>e.type==='epLimit').map(e=>e.size||10));
+}
+function healEp(st,t,v){
+  const u=st.units[t];u.ep=Math.max(0,Math.min(epLimit(st,t),u.ep+v));
+}
+/** 固定伤害：先 DP 后 HP；不增 OD、不增破坏率，也不进入刻印累计。 */
+function directEnemyDamage(st,amount,info={}){
+  const en=st.enemy;let dealt=0;
+  const idx=en.dp.findIndex(g=>g>0);
+  if(idx>=0){const d=Math.min(amount,en.dp[idx]);en.dp[idx]-=d;dealt+=d;if(en.dp[idx]<=0){en.dp[idx]=0;if(!en.dp.some(g=>g>0)){en.broken=true;info.breakHits=(info.breakHits||0)+1;}}}
+  else{const d=Math.min(amount,en.hp);en.hp-=d;dealt+=d;}
+  if(en.hp<=0&&!st.killedTurn){en.hp=0;st.killedTurn=st.turn;}
+  st.turnDamage[st.turn]=(st.turnDamage[st.turn]||0)+dealt;st.totalDamage+=dealt;st.shownDamage=(st.shownDamage||0)+amount;info.damage=(info.damage||0)+dealt;
+  return dealt;
+}
+function releaseInscription(st,skill,info){
+  const mark=enemyStatus(st,'Inscription');if(!mark)return;
+  const amount=Math.min(2e9,Math.max(0,mark.damage||0)),hits=skill.hits?.length?skill.hits:Array.from({length:8},(_,i)=>({ratio:i===7?0.65:0.05}));
+  st.enemy.effects=st.enemy.effects.filter(e=>e!==mark);
+  for(const h of hits){if(st.enemy.hp<=0)break;directEnemyDamage(st,amount*(h.ratio||0),info);}
+  info.attacked=true;info.inscriptionReleased=amount;
+}
+
+/** 事件被动（AdditionalHitOn*）：破盾、命中弱点、使用指定技能、EX 技能、击倒 → 触发同一被动里的其余部件。 */
+const EVENT_TESTS={
+  AdditionalHitOnBreaking:(st,i,skill,info)=>(info.breakHits||0)>0,
+  AdditionalHitOnWeak:(st,i,skill,info)=>!info.normal&&info.attacked&&info.weak,
+  AdditionalHitOnSpecifiedSkill:(st,i,skill,info,part)=>{
+    const labels=[...(part.strval||[]).filter(x=>typeof x==='string'),...(part.branches||[]).map(x=>x.label)];
+    return labels.some(lab=>skill.label===lab||String(skill.label).startsWith(lab));
+  },
+  AdditionalHitOnExtraSkill:(st,i,skill,info)=>!info.normal&&isEX(skill),
+  AdditionalHitOnKill:(st,i,skill,info)=>info.attacked&&st.killedTurn===st.turn&&st.enemy.hp<=0,
+  AdditionalHitOnKillCount:(st,i,skill,info)=>info.attacked&&st.killedTurn===st.turn&&st.enemy.hp<=0,
+};
+function firePassiveEvents(st,i,skill,info){
+  const meta=st.ctx.party[i];
+  for(const p of meta.passives){
+    const trig=(p.parts||[]).find(x=>/^AdditionalHitOn/.test(x.skillType));
+    if(!trig||trig.skillType==='AdditionalHitOnHealedSpWithoutSelfHeal')continue;
+    const test=EVENT_TESTS[trig.skillType];
+    if(!test){flag(st,'approx','事件被动未建模:'+trig.skillType);continue;}
+    if(!test(st,i,skill,info,trig))continue;
+    if(trig.cond&&!check(st,trig.cond,i,info))continue;
+    if(p.limit>0&&(st.passiveCount[p.label+':'+i]||0)>=p.limit)continue;
+    if(p.condition&&!check(st,p.condition,i,info))continue;
+    st.passiveCount[p.label+':'+i]=(st.passiveCount[p.label+':'+i]||0)+1;
+    for(const part of p.parts){
+      if(/^AdditionalHitOn/.test(part.skillType))continue;
+      if(part.skillType==='AdditionalTurn'&&st.round==='extra')continue; // 追加回合内除外
+      applyPart(st,i,{label:p.label,name:p.name,skillLabel:p.skillLabel,level:1,maxLevel:1,parts:p.parts},part,{...info,passive:false,eventPassive:true});
+    }
+  }
+}
+
+function healSp(st,t,v,byAlly){
+  const u=st.units[t],cap=spLimit(st,t);
+  u.sp=cap==null?u.sp+v:Math.max(u.sp,Math.min(cap,u.sp+v));
+  // “被他人主动技能回复 SP 时”类被动（AdditionalHitOnHealedSpWithoutSelfHeal）
+  if(byAlly!=null&&byAlly!==t)for(const p of st.ctx.party[t].passives)if((p.parts||[]).some(x=>x.skillType==='AdditionalHitOnHealedSpWithoutSelfHeal')){
+    for(const part of p.parts)if(part.skillType==='HealSp')for(const k of targetsOf(st,t,part)){if(typeof k==='number'){const c=spLimit(st,k);st.units[k].sp=c==null?st.units[k].sp+(part.power?.[0]||0):Math.min(Math.max(c,st.units[k].sp),st.units[k].sp+(part.power?.[0]||0));}}
+  }
+}
+function spLimit(st,t){
+  let cap=null;
+  for(const p of st.ctx.party[t].passives)for(const part of p.parts||[])if(part.skillType==='SpLimitOverwrite'&&part.exit?.cond==='Eternal')cap=Math.max(cap||0,part.power?.[0]||0);
+  return cap;
+}
+
+// 常驻被动汇总（攻击增益强化、减益强化、全能力 +N）：只看已满足条件的 Eternal 类被动
+function passiveBonus(st,i){
+  const out={attackBuffUp:0,debuffUp:0,defenseDebuffUp:0,allStat:0,zoneUp:0,debuffTurnUp:0};
+  for(const u of st.ctx.party)for(const p of u.passives){if(duplicatePassive(st,u.i,p))continue;for(const part of p.parts||[]){
+    const k={GiveAttackBuffUp:'attackBuffUp',GiveDebuffUp:'debuffUp',GiveDefenseDebuffUp:'defenseDebuffUp',AllStatusUpValue:'allStat',MemorySpirit:'allStat',ZoneUp:'zoneUp',GiveDebuffTurnUp:'debuffTurnUp'}[part.skillType];
+    if(!k)continue;
+    if(!targetsOf(st,u.i,part).includes(i))continue;
+    if(p.condition&&!check(st,p.condition,u.i,{}))continue;
+    // MemorySpirit（大师技能“紡がれた記憶”等）：按记忆修复人数最多 +dv，按满值计（近似）
+    // MemorySpirit（大师技能“紡がれた記憶”）：只在战斗中生效、不进显示面板；缺 dv 时沿用模型的满级假定 +20。
+    out[k]+=part.skillType==='MemorySpirit'?(part.dv||20):(k==='allStat'||k==='debuffTurnUp')?(part.power?.[0]||0):(part.power?.[0]||0)*100;
+  }}
+  return out;
+}
+// 技能给予的“攻击增益效果量上升”（GiveAttackBuffUp 主动部件）：施放者身上的有效值
+function activeStrengthen(st,actor){return st.units[actor].effects.filter(e=>e.type==='giveAttackBuffUp').reduce((s,e)=>s+e.size,0);}
+
+// ---------------------------------------------------------------- 攻击
+
+export function memberStats(st,i){
+  const m=st.ctx.party[i],u=st.units[i],add=Math.min(10,u.morale||0)*R.MORALE_STAT+passiveBonus(st,i).allStat;
+  const ups=u.effects.filter(e=>e.type==='statUp');
+  if(!add&&!ups.length)return m.stats;
+  return Object.fromEntries(R.STATS.map(k=>[k,m.stats[k]+add+ups.filter(e=>e.stat==='all'||e.stat===k).reduce((s,e)=>s+e.size,0)]));
+}
+
+/** 收集攻击者当前的增益/减益合计（%），交给 computeAttack。 */
+export function collectMods(st,actor,model,info={}){
+  const u=st.units[actor],m=st.ctx.party[actor],eff=u.effects,en=st.enemy.effects,el=model.element;
+  const pick=(list,type)=>sumSize(slotSelect(list,type));
+  const passive=(list,type,f=()=>true)=>list.filter(e=>e.passive&&e.type===type&&f(e)).reduce((s,e)=>s+(e.perToken?e.size*(st.units[actor].tokens||0):e.size),0);
+  const elemMatch=e=>!e.element||e.element===el;
+  const normalOk=e=>!info.normal||e.includeNormal;
+  const tok=e=>e.perToken?e.size*(u.tokens||0):e.size;
+  const atkBuffs=eff.filter(e=>e.type==='attackUp'&&!e.passive&&normalOk(e));
+  const charge=info.normal?null:slotSelect(eff,'charge',1)[0];
+  const field=st.field&&st.field.element===el?(st.field.size*(1+passiveBonus(st,st.field.owner).zoneUp/100)+(st.mods.zoneUp||0))*(1+(st.mods.zoneRule||0)/100):0;
+  const eq=m.equipment;
+  const mods={
+    attackUp:sumSize(slotSelect(atkBuffs,'attackUp')),passiveAttackUp:passive(eff,'attackUp',normalOk),
+    elementAttackUp:sumSize(slotSelect(eff.filter(e=>e.type==='elementAttackUp'&&e.element===el),'elementAttackUp')),
+    passiveElementAttackUp:passive(eff,'elementAttackUp',e=>e.element===el),
+    mindsEye:pick(eff,'mindsEye')+passive(eff,'mindsEye'),
+    critRateUp:pick(eff,'critRateUp'),passiveCritRateUp:passive(eff,'critRateUp'),
+    elementCritRateUp:sumSize(slotSelect(eff.filter(e=>e.type==='elementCritRateUp'&&e.element===el),'elementCritRateUp'))+passive(eff,'elementCritRateUp',e=>e.element===el),
+    critDamageUp:pick(eff,'critDamageUp'),passiveCritDamageUp:passive(eff,'critDamageUp'),
+    elementCritDamageUp:sumSize(slotSelect(eff.filter(e=>e.type==='elementCritDamageUp'&&e.element===el),'elementCritDamageUp'))+passive(eff,'elementCritDamageUp',e=>e.element===el),
+    chargeAttackUp:charge?charge.size:0,chargeCritRate:charge?charge.critRate:0,
+    shadowClone:pick(eff,'shadowClone'),passiveShadowClone:passive(eff,'shadowClone'),
+    yamawaki:pick(eff,'yamawakiMinion'),passiveYamawaki:passive(eff,'yamawakiMinion'),
+    eternalOath:pick(eff,'eternalOath'),cherry:pick(eff,'arrowCherryBlossoms'),
+    destructionRateUp:pick(eff,'destructionRateUp'),passiveDamageRateUp:passive(eff,'destructionRateUp'),
+    funnel:[...slotSelect(eff,'consecutiveHit').flatMap(e=>e.ratios||[]),...eff.filter(e=>e.passive&&e.type==='consecutiveHit').flatMap(e=>e.ratios||[])],
+    morale:u.morale,tokens:u.tokens,field,
+    defenseDown:sumSize(slotSelect(en.filter(e=>!e.permanent),'defenseDown')),passiveDefenseDown:passive(en,'defenseDown',e=>!e.permanent),
+    permanentDefenseDown:sumSize(slotSelect(en.filter(e=>e.permanent&&e.type==='defenseDown'),'defenseDown')),
+    elementDefenseDown:sumSize(slotSelect(en.filter(e=>!e.permanent&&e.type==='elementDefenseDown'&&elemMatch(e)),'elementDefenseDown')),
+    permanentElementDefenseDown:sumSize(slotSelect(en.filter(e=>e.permanent&&e.type==='elementDefenseDown'&&elemMatch(e)),'elementDefenseDown')),
+    dpDefenseDown:pick(en,'dpDefenseDown'),fragile:pick(en,'fragile'),
+    resistanceDown:sumSize(slotSelect(en.filter(e=>e.type==='resistanceDown'&&elemMatch(e)),'resistanceDown')),
+    resistanceOverwrite:en.some(e=>e.type==='resistanceDownOverwrite'&&elemMatch(e)),
+    misfortune:Math.max(0,...en.filter(e=>e.type==='misfortune').map(e=>e.size))+(enemyStatus(st,'Disaster')?.level||0)*7+(enemyStatus(st,'Venom')?.statDown||0),
+    babied:(()=>{const lv=enemyStatus(st,'Infantilized')?.level||0;return 3*lv+(lv>=20?30:0);})(),
+    superBreak:Math.max(0,...en.filter(e=>e.type==='superBreak').map(e=>e.size)),superDown:Math.max(0,...en.filter(e=>e.type==='superDown').map(e=>e.size)),
+    necklace:!!eq.necklaceAttack,ringLevel:eq.ringElement&&eq.ringElement===el?eq.ringLevel:null,earring:eq.earring||{type:null,bonus:10},
+    overdrivePercent:st.odRounds>0?100+eff.filter(e=>e.type==='odDamage').reduce((s,e)=>s+e.size,0)*(st.odLevel||1):100, /* 2025-07 ver5.11 起 OD1/2/3 = ×1.1/1.2/1.3（社区计算器同） */tearLevel:m.tearType==='AttackUp'?m.tearLevel:0,dpPercent:100,spValue:u.sp,
+    scoreAttackAttackUp:st.mods.attackUpRule||0,
+  };
+  // 禍每级 −7 能力值、幼儿回归每级攻击 +3%（Lv20 再 +30%）：游戏内说明（用户 2026-11-09 确认可信）
+  // 料理与晚夏之阵都是独立技能攻击增益，不占普通两个攻击增益槽；普攻不吃。
+  if(!info.normal)mods.passiveAttackUp+=sumSize(eff.filter(e=>e.type==='foodAttack'||e.type==='summerAttack'));
+  // 手环“普通攻击攻击力 +N%”（每回合开始给予，按与攻击力同组相加；2026-11-09 训练场普攻读数吻合）
+  if(info.normal&&eq.normalAttackUp)mods.passiveAttackUp+=eq.normalAttackUp;
+  // 古代项链“技能攻击 +10%”、进攻/破坏耳环“技能攻击力”只对技能
+  if(info.normal){mods.necklace=false;mods.earring={type:null,bonus:10};}
+  if(st.cards?.size)cardMods(st,actor,el,info,mods);
+  // 属性の印（持有者 = 该属性卡面；等级 = 部队该属性人数）：Lv1 技能攻击与ダメージ+30%（乘区待核对，暂按独立乘区）、
+  // Lv3 技能攻击破坏率上升量+10%、Lv4 暴击率+30%、Lv5 暴击伤害+30%
+  const mk=markOf(st,actor);
+  // 属性の印（2026-11-09 训练场三轮 + N1 定案）：
+  //   Lv1“技能攻击时伤害 +30%”：只对该属性的技能，并入攻击力组相加（冰凍瞬間超越前后 5 组读数吻合；火技能无）
+  //   Lv3“技能攻击时破坏率 +10%”：同 Lv1 范围（推定）
+  //   Lv4/Lv5“攻击时暴击率/暴伤 +30%”：持有者的所有攻击（含普攻，蒼井暗属性普攻暴击倍率 ≈2.1）
+  if(mk){
+    const V=R.MARK_VALUES,L=R.MARK_EFFECT,same=el===mk.element;
+    if(!info.normal&&same&&mk.level>=L.damageUp)mods.passiveAttackUp+=V.damageUp;
+    if(!info.normal&&same&&mk.level>=L.destructionRateUp)mods.passiveDamageRateUp+=V.destructionRateUp;
+    if(mk.level>=L.critRate)mods.passiveCritRateUp+=V.critRate;
+    if(mk.level>=L.critDamage)mods.passiveCritDamageUp+=V.critDamage;
+  }
+  // 超越ゲージ 100%：该属性卡面 攻击力+300%（与技能攻击力アップ同组，Game8 实测）、破坏率上升量+10%；
+  // 该属性攻击 バースト：确定暴击、暴击伤害+100%（单独发动：与技能的单独发动暴伤取高者）、破坏率上限 +300%（不与超ダウン/強ブレイク叠加）
+  if(transcendFor(st,actor)){
+    const X=R.TRANSCEND_EFFECT;
+    mods.passiveAttackUp+=X.attackUp;mods.passiveDamageRateUp+=X.destructionRateUp;
+    if(el===st.trans.element){
+      mods.forceCrit=true;
+      const cd=eff.filter(e=>e.type==='critDamageUp').concat([{type:'critDamageUp',size:X.critDamage,limitType:'Once'}]);
+      mods.critDamageUp=sumSize(slotSelect(cd,'critDamageUp'));
+      const cap=Math.max(mods.superBreak,mods.superDown);
+      mods.superBreak=Math.max(cap,X.destructionLimit);mods.superDown=0;
+      // 推定 D：超越的单独发动暴伤生效时，被动暴伤（冰之轟鳴、印 Lv5 等）不再叠加（冰凍瞬間实测比叠加低约 20%）
+      if(R.TRANSCEND_CRIT_EXCLUSIVE){mods.passiveCritDamageUp=0;flag(st,'approx','超越暴伤与被动暴伤不叠加（推定 D）');}
+    }
+  }
+  return mods;
+}
+
+function doAttack(st,actor,skill,part,info){
+  const shownBefore=st.shownDamage||0;
+  const m=st.ctx.party[actor],u=st.units[actor],E=st.ctx.enemy,en=st.enemy;
+  const model=info.normal?(info.normalPart?{...attackModel(info.normalSkill,info.normalPart,{characterId:m.charId,styleId:m.styleId,physicalType:String(m.attackType||'slash').toLowerCase()}),tearEnhancementType:m.tearType}:normalAttackModel(m))
+    :{...attackModel(skill,part,{characterId:m.charId,styleId:m.styleId,physicalType:String(m.attackType||'slash').toLowerCase()}),tearEnhancementType:m.tearType};
+  // 沉浸状态：攻击技能带所选属性（普攻、追击不在对象内）
+  if(!info.normal&&u.reinforced)model.element=u.reinforced;
+  const mods=collectMods(st,actor,model,info);
+  const res=computeAttack({skill:model,level:skill.level||1,stats:memberStats(st,actor),enemy:{...E,dp:E.dp,hp:E.hp},mods,
+    state:{destructionRate:en.dr,hp:en.hp,dp:en.dp}});
+  info.weak=info.weak||res.meta.weak;
+  // 取值：浮动取中点；暴击按 critMode
+  const rate=res.critRate.total/100,mode=st.ctx.opt.critMode||'expected';
+  const w=mode==='all'?1:mode==='none'?0:rate;
+  let dealt=0;
+  // 按 hit 回放到状态：沿用 computeAttack 的逐段破坏率（用期望伤害），并更新 DP 槽/HP
+  // critMode 'random'（蒙特卡洛）：每段独立判定暴击，伤害在 min–max（浮动 90–110%）间均匀随机
+  const rng=st.ctx.opt.rng;
+  const hits=res.perHit.map((h,k)=>{const c=res.perHitCrit[k];
+    if(mode==='random'&&rng){const v=rng()<rate?c:h;return {dmg:v.min+(v.max-v.min)*rng(),dp:h.dp,after:h.after};}
+    return {dmg:((h.min+h.max)/2)*(1-w)+((c.min+c.max)/2)*w,dp:h.dp,after:h.after};});
+  // 单次攻击总伤害封顶：10 亿软上限（EX 打分时用 EX 衰减），按比例缩放各段
+  {const raw=hits.reduce((s,h)=>s+h.dmg,0),cap=capAttack(raw,!!st.ctx.opt.exAttenuation);if(raw>0&&cap<raw)for(const h of hits)h.dmg*=cap/raw;}
+  st.shownDamage=(st.shownDamage||0)+hits.reduce((s,h)=>s+h.dmg,0); // 显示伤害：本次攻击全部 hit（含打破/击杀时的溢出）
+  for(const h of hits){
+    if(en.hp<=0)break;
+    const gaugeIdx=en.dp.findIndex(g=>g>0);
+    if(gaugeIdx>=0){
+      const d=Math.min(h.dmg,en.dp[gaugeIdx]);en.dp[gaugeIdx]-=d;dealt+=d;
+      if(en.dp[gaugeIdx]<=0){en.dp[gaugeIdx]=0;if(!en.dp.some(g=>g>0)){en.broken=true;info.breakHits=(info.breakHits||0)+1;if(st.log)st.log.push({t:'break',turn:st.turn});
+        if(m.role==='Breaker')cardBreak(st);} // 遭遇战卡：Breaker 破盾
+        en.dr=Math.max(en.dr,h.after);}
+    }else{
+      const d=Math.min(h.dmg,en.hp);en.hp-=d;dealt+=d;en.dr=Math.max(en.dr,h.after);
+    }
+  }
+  if(en.hp<=0&&!st.killedTurn){en.hp=0;st.killedTurn=st.turn;}
+  // 阶段多敌：全体攻击对其余存活敌人造成同样伤害（近似：不逐段算破坏率，按各自 DP→HP 扣）
+  if(st.queue&&(part.targetType==='All')){const total=hits.reduce((a,h)=>a+h.dmg,0);
+    for(const q of st.queue)if(!q.dead&&q.state!==en){let left=total;const s2=q.state;st.shownDamage=(st.shownDamage||0)+total;
+      for(let g=0;g<s2.dp.length&&left>0;g++){const d=Math.min(left,s2.dp[g]);s2.dp[g]-=d;left-=d;dealt+=d;}
+      if(!s2.dp.some(g=>g>0))s2.broken=true;
+      if(left>0){const d=Math.min(left,s2.hp);s2.hp-=d;dealt+=d;}
+      if(s2.hp<=0){s2.hp=0;q.dead=true;if(st.log)st.log.push({t:'kill',turn:st.turn,name:q.enemy.name});}}
+    flag(st,'approx','全体攻击对其余敌人按同伤害近似');}
+  // OD：每 hit 2.5%×耳环；被抗（任一物理/属性 <100%）则 0（Planner Pl/Cs）
+  const resisted=model.physicalType&&E.weaknesses.physical[model.physicalType]<100||E.weaknesses.element[model.element]<100;
+  if(!info.normal){
+    const extra=mods.funnel.length;
+    // 每段 OD 点数 = ⌊250 × 敌方 OD 率⌋ × 耳环系数（OD与破坏率计算表 261011）
+    const per=floorOd(Math.floor(R.OD_PER_HIT*100*(E.odRate??1))/100*(1+odEarring(m.equipment.odEarringBonus,model.hitCount)/100));
+    // 全体攻击按命中的敌人数计 OD（伤害计算表 v4.9「目标数」；社区排轴器按 1 体）
+    const targets=part.targetType==='All'?1+Math.max(0,E.others||0):1;
+    if(!resisted)addOd(st,(model.hitCount+extra)*per*st.odGainMult*targets);
+  }
+  st.turnDamage[st.turn]=(st.turnDamage[st.turn]||0)+dealt;
+  st.totalDamage+=dealt;
+  if(!info.normal&&st.skillDamageByElement){const el=model.element||'nonelemental';
+    st.skillDamageByElement[el]=(st.skillDamageByElement[el]||0)+(st.shownDamage-shownBefore);}
+  info.damage=(info.damage||0)+dealt;info.attacked=true;info.crit=rate;
+  // 刻印只累计本次实际进入 DP／HP 的伤害（不含过量伤害）；DoT 与引爆不走这里。
+  const inscription=enemyStatus(st,'Inscription');if(inscription&&dealt>0)inscription.damage=(inscription.damage||0)+dealt;
+  if(!info.normal){
+    // 攻击得标记（TokenSetByAttacking：每对 1 个敌人造成伤害 +1）
+    for(const p of m.passives)for(const part of p.parts||[])if(part.skillType==='TokenSetByAttacking')u.tokens=Math.min(R.MORALE_TOKEN_STACK_MAX,u.tokens+(part.power?.[0]||1));
+  }
+  if(!info.normal){
+    // 攻击后：消耗“下次攻击”类（Count）攻击侧增益；连击按次数
+    for(const e of u.effects)if(e.uses!=null&&['attackUp','elementAttackUp','mindsEye','critRateUp','critDamageUp','elementCritRateUp','elementCritDamageUp','consecutiveHit','charge','destructionRateUp','arrowCherryBlossoms','shadowClone'].includes(e.type)&&(e.type!=='elementAttackUp'||e.element===model.element||!e.element))e.uses--;
+    u.effects=u.effects.filter(e=>e.uses==null||e.uses>0);
+  }
+}
+
+// OD 耳环（Planner Ss/aa）：bonus 为 10/12/15；hit 越多加成越高
+function odEarring(bonus,hits){
+  if(!bonus)return 0;
+  const i=Number.isFinite(hits)?Math.min(Math.max(Math.ceil(hits),1),10):1;
+  return bonus-(bonus-5)/9*(10-i);
+}
+
+// 普通攻击：公开数据没有部件，沿用推定（力2灵巧1、威力 300–600、3 hit 计 OD）
+export function normalAttackModel(m){
+  // 手环“普通攻击变为X属性”时普攻带该属性（受该属性弱点/超越バースト影响）
+  // 威力曲线按训练场拟合（R.NORMAL_ATTACK）；总威力各角色相同，按角色分成不同 hit 数（R.NORMAL_HITS，未知按 1）
+  const N=R.NORMAL_ATTACK,hits=R.NORMAL_HITS_BY_CHAR[m.charId]||R.NORMAL_HITS_BY_WEAPON[m.weapon]||1;
+  return {id:'normal',label:'Normal',element:m.equipment?.normalElement||'nonelemental',physicalType:String(m.attackType||'slash').toLowerCase(),hitCount:hits,maxLevel:1,
+    powers:{min:[N.min],max:[N.max]},paramLimit:N.limit,parameters:{str:2,dex:1,con:0,wis:0,spr:0,luk:0},destructionRateBonus:1};
+}
+
+// ---------------------------------------------------------------- 行动
+
+function runParts(st,actor,skill,info){
+  const parts=skill.parts||[];
+  const before=parts.filter(p=>p.hits?.some(h=>h.type==='Before'));
+  const after=parts.filter(p=>p.hits?.some(h=>h.type==='After'));
+  const main=parts.filter(p=>!before.includes(p)&&!after.includes(p));
+  for(const p of [...before,...main,...after])applyPart(st,actor,skill,p,info);
+}
+
+/** 消耗：先结算技能 overwrite／OverwriteSp，再算 SP 常驻减耗；EP 不走 SP 减耗。 */
+export function effectiveCost(st,i,s){
+  let base=s.sp||0;
+  if(Number.isFinite(s.overwrite)&&(!s.overwriteCond||check(st,s.overwriteCond,i,{})))base=s.overwrite;
+  const ow=st.units[i].effects.filter(e=>e.type==='overwriteSp'&&e.skillLabel===s.label).sort((a,b)=>(a.id||0)-(b.id||0)).at(-1);
+  if(ow)base=ow.size;
+  // 沉浸状态：技能消耗 SP 变为 0（消耗全部 SP 的技能除外）
+  if(st.units[i].reinforced&&!(s.parts||[]).some(p=>p.skillType==='AttackBySp'))return 0;
+  if(s.consume==='Ep')return Math.max(0,base);
+  let red=0;
+  for(const u of st.ctx.party)for(const p of u.passives){if(duplicatePassive(st,u.i,p))continue;for(const part of p.parts||[]){
+    if(part.skillType!=='ReduceSp'&&part.skillType!=='HighBoost')continue;
+    const eternal=part.exit?.cond==='Eternal',odEnd=part.exit?.cond==='OverDriveEnd';
+    const timingOk=(eternal&&TIMING.battleStart(p.timing))||(odEnd&&st.odRounds>0&&p.timing==='OnOverdriveStart')
+      ||(p.timing==='OnAdditionalTurnStart'&&st.round==='extra')||(!eternal&&!odEnd&&TIMING.playerTurnStart(p.timing));
+    if(!timingOk)continue;
+    if(!targetsOf(st,u.i,part).includes(i))continue;
+    if(p.condition&&!check(st,p.condition,u.i,{}))continue;
+    if(part.targetCondition&&!check(st,part.targetCondition,i,{}))continue;
+    red+=part.skillType==='HighBoost'?-2:(part.power?.[0]||0);
+  }}
+  return Math.max(0,base-red);
+}
+
+function skillElement(s){const parts=(s.parts||[]).flatMap(p=>p.branches?p.branches.flatMap(b=>b.parts||[]):[p]);const p=parts.find(x=>(x.elements||[]).length);return p?elementOf(p):null;}
+const isEX=s=>s.isEX??/Skill5\d/.test(s.label||'');
+function powerTable(part,skill){const p=part.power||[0,0],g=part.growth||[0,0],n=Math.max(1,skill?.maxLevel||1),fixed=!p[1];const min=[],max=[];for(let lv=1;lv<=n;lv++){min.push(p[0]*(1+(g[0]||0)*(lv-1)));max.push((fixed?p[0]:p[1])*(1+(g[fixed?0:1]||0)*(lv-1)));}return {min,max};}
+const zeroSpOk=s=>/Sp\(\)\s*>=\s*0/.test(s.useCond||'')||/Sp\(\)\s*>=\s*0/.test(s.cond||'');
+const shredding=st=>st.units.some(u=>u.effects.some(e=>e.status==='Shredding'));
+const hasAttackPart=s=>(s.parts||[]).some(p=>ATTACK_PART_TYPES.has(p.skillType)||(p.branches||[]).some(hasAttackPart));
+
+export function usableSkills(st,i){
+  const meta=st.ctx.party[i],u=st.units[i],out=[];
+  if(u.down)return out; // 战斗不能
+  meta.skills.forEach((s,k)=>{
+    if(s.consume&&s.consume!=='Sp'&&s.consume!=='Ep')return;
+    if(s.passive)return;
+    if(s.special==='immersion'&&(u.reinforced||u.immPending))return; // 沉浸中不能再次沉浸
+    const cost=effectiveCost(st,i,s),ep=s.consume==='Ep';
+    if(!(cost<=(ep?u.ep:u.sp)||(!ep&&u.sp>=0&&(zeroSpOk(s)||shredding(st)))))return;
+    let limit=Array.isArray(s.uses)?Math.max(...s.uses.map(Math.abs)):s.uses;
+    if(limit>0){const el=skillElement(s);if(el&&meta.equipment.skillCountUp?.[el])limit+=meta.equipment.skillCountUp[el];} // 古代项链：该属性技能次数 +1
+    if(limit>0&&!s.restricted)limit+=passiveCountUp(st,i); // 被动「技能使用次数上限 +N」（蒼井〈協心〉等；限定次数技能除外）
+    if(limit>0&&(u.uses[s.label]||0)>=limit)return;
+    if(s.cond&&!/Sp\(\)/.test(s.cond)&&!check(st,s.cond,i,{}))return;
+    if(st.round==='extra'&&/IsAdditionalTurn\(\)\s*==\s*0/.test(s.useCond||''))return;
+    out.push(k);
+  });
+  if(!meta.noNormal)out.push(NORMAL);
+  return out;
+}
+
+export function act(st,i,k,target){
+  const meta=st.ctx.party[i],u=st.units[i];
+  if(u.down){if(st.log)st.log.push({t:'down-skip',turn:st.turn,unit:i});return {};}
+  const info={critMode:st.ctx.opt.critMode||'expected',target};
+  let skill;
+  if(k===NORMAL){
+    skill={label:'Normal',name:'普通攻击',level:1,hitCount:1,parts:[{skillType:'AttackNormal',targetType:'Single'}]};
+    info.normal=true;
+    const replaced=normalReplacement(st,i),attack=replaced?.parts?.find(p=>ATTACK_PART_TYPES.has(p.skillType));
+    if(attack){info.normalSkill={...replaced,level:1};info.normalPart=attack;}
+    const before=st.od;
+    doAttack(st,i,skill,attack||skill.parts[0],info);
+    st.od=before;addOd(st,R.NORMAL_ATTACK_HITS*Math.floor(R.OD_PER_HIT*100*(st.ctx.enemy.odRate??1))/100*st.odGainMult);
+  }else if(meta.skills[k]?.special==='immersion'){
+    // 选择沉浸：本次行动只做这件事，下次选择行动时进入沉浸状态（赋予的防御力上升/持续 DP 回复不影响输出，不建模）
+    skill=meta.skills[k];u.immPending=skill.element;u.played++;
+  }else{
+    skill=meta.skills[k];
+    const cost=effectiveCost(st,i,skill),ep=skill.consume==='Ep';
+    if(ep)u.ep-=cost;else u.sp-=cost;
+    info.sp=ep?0:cost;
+    u.uses[skill.label]=(u.uses[skill.label]||0)+1;u.played++;
+    // OD 量表技能部件吃 DRIVE 耳环（按 hit 数）
+    const hitsForOd=hasAttackPart(skill)?Math.max(1,skill.hitCount||1):1;
+    info.odMult=1+odEarring(meta.equipment.odEarringBonus,hitsForOd)/100;
+    // EX 连发与白虎猛袭是两种状态；任一成立就执行两次，SP／EP 和使用次数只扣一次。
+    const dbl=isEX(skill)&&u.effects.find(e=>e.type==='doubleAction'&&(e.uses==null||e.uses>0));
+    const assault=hasAttackPart(skill)&&u.effects.some(e=>e.type==='byakkoDoubleAction');
+    const reinforcedEx=u.reinforced&&(skill.parts||[]).some(p=>(p.skillType==='SkillCondition'||p.skillType==='SkillSwitch')&&/IsReinforcedMode/.test(p.cond||''));
+    for(let t=0;t<(dbl||assault?2:1);t++)runParts(st,i,skill,info);
+    if(reinforcedEx)u.reinforced=null; // 用了在沉浸状态下性能变化的 EX 后解除沉浸
+    if(info.consumeTokens)u.tokens=0; // 「消耗自己所有象徵」类
+    // 遭遇战卡：Breaker 放 SP≥12 的 EX → 全体技能攻击 +200% / 暴伤 +100%（各 5 次）
+    if(st.cards&&meta.role==='Breaker'&&isEX(skill)&&(skill.sp||0)>=12)for(const x of st.units){
+      if(st.cards.has('breakerAtk200'))x.effects.push({type:'attackUp',size:200,passive:true,uses:5,turns:null,currentOnly:false,src:'card'});
+      if(st.cards.has('breakerCrit100'))x.effects.push({type:'critDamageUp',size:100,passive:true,uses:5,turns:null,currentOnly:false,src:'card'});}
+    // 遭遇战卡：Healer/Defender 放 EX → 全体 DP 回复 20%（可溢出至 150%）
+    if(st.cards?.has('healerEx20')&&(meta.role==='Healer'||meta.role==='Defender')&&isEX(skill))
+      st.units.forEach((x,k)=>healDp(st,k,0.2*st.ctx.party[k].dpMax,{value:[1.5]}));
+    if(dbl){if(dbl.uses!=null)dbl.uses--;u.effects=u.effects.filter(e=>e.type!=='doubleAction'||e.uses==null||e.uses>0);}
+  }
+  firePassiveEvents(st,i,skill,info);
+  advanceTarget(st);
+  if(!info.normal&&info.attacked&&st.units[i].front&&!(st.killedTurn&&st.enemy.hp<=0))followUp(st,i,skill,info);
+  chargeTranscend(st,i);
+  if(st.log)st.log.push({t:'act',turn:st.turn,round:st.round,unit:i,skill:skill.name||skill.label,label:skill.label,damage:Math.round(info.damage||0),
+    sp:Math.round(u.sp*10)/10,ep:u.ep,od:Math.round(st.od*100)/100,dp:Math.round(st.enemy.dp.reduce((a,b)=>a+b,0)),hp:Math.round(st.enemy.hp),dr:Math.round(st.enemy.dr*1000)/10,
+    crit:info.crit!=null?Math.round(info.crit*1000)/10:null,trans:st.trans?st.trans.gauge:null});
+  return info;
+}
+
+// ---------------------------------------------------------------- 回合流程（Planner）
+
+/**
+ * 普通回合开始：全员 SP +2（已 ≥20 不加，SpLimitOverwrite 改上限）+ 回合开始被动；规则；被动 OD。
+ * opt.withOd: 本回合在开始时发动 OD 的等级（turnStart 窗口）
+ */
+function normalReplacement(st,i){
+  for(const p of st.ctx.party[i].passives){
+    if(p.condition&&!check(st,p.condition,i,{}))continue;
+    for(const part of p.parts||[])if(part.skillType==='ReplaceNormalSkill'&&(!part.cond||check(st,part.cond,i,{}))){
+      const br=part.branches?.[0];if(br&&(!br.cond||check(st,br.cond,i,{})))return br;
+    }
+  }
+  return null;
+}
+function pursuitReplacement(st,p){
+  for(const passive of p.passives){
+    if(passive.condition&&!check(st,passive.condition,p.i,{}))continue;
+    for(const part of passive.parts||[])if(part.skillType==='ReplacePursuit'&&(!part.cond||check(st,part.cond,p.i,{}))){
+      const br=part.branches?.[0];if(!br||br.cond&&!check(st,br.cond,p.i,{}))continue;
+      const equipped=p.skills.find(s=>s.label===br.label);
+      return {...br,level:equipped?.level||br.maxLevel||1};
+    }
+  }
+  return null;
+}
+/** 追击：p=1 时完整执行替换追击；概率模式沿用期望 OD，不虚增特殊追击伤害与增益。 */
+function followUp(st,actor,action,info){
+  const rate=st.ctx.opt.followUpRate??R.FOLLOW_UP_RATE_DEFAULT;if(!(rate>0))return;
+  const back=st.ctx.party.filter(p=>!st.units[p.i].front);
+  if(rate===1)for(const p of back){
+    const skill=pursuitReplacement(st,p);if(!skill)continue;
+    const sub={critMode:st.ctx.opt.critMode||'expected',followUp:true,odMult:1};
+    runParts(st,p.i,skill,sub);info.followUpDamage=(info.followUpDamage||0)+(sub.damage||0);
+    return; // 一次行动最多一名成员追击一次
+  }
+  if(back.some(p=>pursuitReplacement(st,p)))flag(st,'approx','概率模式未计特殊追击伤害与增益（仅 p=1 精确）');
+  const E=st.ctx.enemy,ordinary=back.filter(p=>p.followUpHits>0);if(!ordinary.length)return;
+  const ok=p=>!((E.weaknesses.element.nonelemental??100)<100||(E.weaknesses.physical[String(p.attackType||'').toLowerCase()]??100)<100);
+  const hits=ordinary.reduce((s,p)=>s+(ok(p)?p.followUpHits:0),0)/ordinary.length;
+  addOd(st,rate*hits*R.OD_PER_HIT*(E.odRate??1)*st.odGainMult);
+  flag(st,'approx','追击按期望 OD 计（概率 '+Math.round(rate*100)+'%，伤害不计）');
+}
+/** 被动「技能使用次数上限 +N」（SkillLimitCountUp，无属性限定的；属性版来自古代项链，见 equipment.skillCountUp）。 */
+function passiveCountUp(st,i){let n=0;for(const u of st.ctx.party)for(const p of u.passives)for(const part of p.parts||[])
+  if(part.skillType==='SkillLimitCountUp'&&!(part.elements||[]).length&&targetsOf(st,u.i,part).includes(i))n+=part.power?.[0]||0;return n;}
+/** OD 发动消耗：被动「发动 OD 时量表消耗量 −X%」（ReduceConsumeOverDrive，取最大）。 */
+function odCost(st,level){let r=0;for(const u of st.ctx.party)for(const p of u.passives)for(const part of p.parts||[])if(part.skillType==='ReduceConsumeOverDrive')r=Math.max(r,part.power?.[0]||0);
+  return R.OD_COST[level]*(1-r);}
+/** 「沉浸」：选了沉浸之后的下一次选择行动时进入沉浸状态。 */
+function enterImmersion(st,who){for(const u of st.units)if(u.immPending&&(!who||who.includes(u.i))){u.reinforced=u.immPending;u.immPending=null;}}
+export function startTurn(st){
+  enterImmersion(st);
+  st.turn++;st.turnDamage[st.turn]=0;st.round='main';st.odGainMult=1+(st.mods.odGain||0);
+  const venom=enemyStatus(st,'Venom');
+  if(venom&&st.turn>(venom.bornTurn??0)){
+    directEnemyDamage(st,187500*(venom.level||0)); // 125000～250000 的区间中点；固定突伤害
+    venom.statDown=(venom.statDown||0)+2*(venom.level||0);
+  }
+  for(const u of st.units){
+    const cap=spLimit(st,u.i)??R.SP_CAP;
+    if(u.sp<cap)u.sp=Math.min(cap,u.sp+R.SP_PER_TURN);
+    if(u.spSetNext!=null){u.sp=Math.max(u.sp,u.spSetNext);u.spSetNext=null;} // SpecifySp：下回合开始时 SP 回复至 N
+    for(const e of u.effects)if(e.type==='regen')healDp(st,u.i,e.size,null); // 持续性 DP 回复
+    cardTurnStartUnit(st,u); // 遭遇战卡：领域 SP+3、DP 溢出者 SP+5、2 名 Breaker SP+3
+    // 属性の印 Lv6：回合开始时在前卫则自身 SP +1（与回合回复同受 20 上限，推定）
+    const mk=markOf(st,u.i);
+    if(mk&&mk.level>=R.MARK_EFFECT.spPerTurn&&u.front&&u.sp<cap){u.sp=Math.min(cap,u.sp+R.MARK_VALUES.spPerTurn);flag(st,'approx','属性の印 Lv6 SP+1 按受 20 上限');}
+    if(st.territory?.name==='SummersEndTerritory')healSp(st,u.i,1,null);
+  }
+  if(st.territory?.name==='SummersEndTerritory')flag(st,'approx','晚夏之阵每回合 DP+7% 未计（我方 DP 未建模）');
+  if(st.cards?.has('dp120Disaster2')){const n=st.units.filter(u=>dpRatio(st,u.i)>=1.2).length;if(n)forEachEnemy(st,es=>raiseDisaster(es,2*n));}
+  applyRules(st,'OnEveryTurn');
+  firePassives(st,'normalTurnStart');
+}
+
+/** 发动 OD（level 1–3）：扣量表；首轮全员 SP +5/+12/+20（不受 20 上限）；OnOverdriveStart 被动。window='turnStart'|'turnEnd' */
+export function startOverdrive(st,level,window='turnStart'){
+  const cost=odCost(st,level);
+  if(level<=0||st.od<cost||level<(st.mods.minOd||1)||st.odRounds>0)return false;
+  st.od=Math.max(0,round2(st.od-cost));st.odLevel=level;st.odRounds=R.OD_ROUNDS[level];st.odWindow=window;st.round='od';
+  for(const u of st.units)u.sp+=R.OD_SP[level];
+  if(window==='turnEnd'){enterImmersion(st);firePassives(st,'playerTurnStart');} // 回合结束型 OD 的首轮算一次“我方回合开始”（非普通回合）
+  firePassives(st,'overdriveStart');
+  if(st.log)st.log.push({t:'od',turn:st.turn,level,window});
+  return true;
+}
+
+/** 一个 OD 行动轮结束：回合数类效果 −1（OD 轮各算一回合，Planner Wi）；最后一轮结束清 OverDriveEnd 效果。 */
+export function endOdRound(st){
+  // 每个 OD 轮各算一回合；回合开始型 OD 的最后一轮不计（之后的普通轮计，Planner Wi）
+  if(!(st.odRounds===1&&st.odWindow==='turnStart'))tickTurns(st,null);
+  st.odRounds--;
+  if(st.odRounds<=0){
+    st.odRounds=0;st.odLevel=0;
+    for(const u of st.units){u.effects=u.effects.filter(e=>!e.odEnd);u.ep=Math.min(u.ep,epLimit(st,u.i));}
+    st.round=st.odWindow==='turnEnd'?'end':'main';
+  }else{
+    st.round='od';enterImmersion(st);
+    firePassives(st,'playerTurnStart');
+  }
+}
+
+/** 追加回合：只有获得追加回合的成员行动；不加 SP；结束时只有这些成员身上的回合数效果 −1。 */
+export function pendingExtra(st){return st.units.filter(u=>u.extra>0).map(u=>u.i);}
+export function startExtraTurn(st){
+  enterImmersion(st,pendingExtra(st));
+  st.round='extra';
+  firePassives(st,'additionalTurnStart',(p,u)=>st.units[u.i].extra>0);
+  firePassives(st,'playerTurnStart',(p,u)=>st.units[u.i].extra>0);
+}
+export function endExtraTurn(st,who){
+  tickTurns(st,new Set(who));
+  for(const i of who)st.units[i].extra=0;
+  st.round='main';
+}
+
+/** 我方行动结束 → 敌方行动 → 回合数效果 −1、仅本轮效果清除。skipTick: 本回合后接 turnEnd 型 OD 时由 OD 轮负责计时。 */
+export function endPlayerTurn(st,{skipTick=false}={}){
+  if(!skipTick)tickTurns(st,null);
+  if(!st.killedTurn)enemyAct(st);
+  if(st.queue&&!st.killedTurn)for(const q of st.queue)if(!q.dead&&q.state!==st.enemy)enemyActAs(st,q.enemy,q.state);
+  // “敌方回合结束”计时的我方效果（防御上升、挑衅、敌方施加的被伤增加）在敌人行动后才扣
+  for(const u of st.units)u.effects=u.effects.map(e=>{if(e.enemyEnd&&e.turns!=null)e.turns--;return e;}).filter(e=>!e.enemyEnd||e.turns==null||e.turns>0);
+  st.round='end';
+}
+
+function tickTurns(st,only){
+  const tick=list=>list.filter(e=>!e.currentOnly).map(e=>{if(e.turns!=null&&(!only||only.has(e.owner)||only.has(e.target)))e.turns--;return e;}).filter(e=>e.turns==null||e.turns>0);
+  for(const u of st.units){
+    u.effects=u.effects.filter(e=>!e.currentOnly).map(e=>{if(e.turns!=null&&!e.enemyEnd&&(!only||only.has(u.i)))e.turns--;return e;}).filter(e=>e.turns==null||e.turns>0);
+  }
+  if(!only){
+    st.enemy.effects=tick(st.enemy.effects);
+    if(st.field&&st.field.turns!=null&&--st.field.turns<=0)st.field=null;
+  }
+}
+
+// ---------------------------------------------------------------- 敌方
+
+// ---------------------------------------------------------------- 我方 DP / HP（2026-11-09）
+// 受击公式按 HBR Toolbox「受击伤害计算」：能力差 p = 敌方能力值 − 我方加权（体/精，按技能参数）；
+//   p ≥ 上限 → max；0 ≤ p < 上限 → min+(max−min)·p/上限；−上限 ≤ p < 0 → min+(min−1)·p/上限；否则 1。
+//   伤害 = 威力 × 攻击率 ×(1+敌方攻击上升)×(1+我方被伤增加)×(1−防御上升)×(1−被动防御)×(印 Lv2 0.9)× 浮动。DP 先扣，DP 0 后扣 HP，HP 0 战斗不能。
+function enemyAttackPower(part,stats,border){
+  const [mn,mx]=part.power||[0,0],lim=part.diffForMax||0;
+  const w=part.parameters||{},tw=Object.values(w).reduce((a,b)=>a+(b||0),0)||1;
+  const def=Object.entries(w).reduce((a,[k,v])=>a+(stats[k]||0)*(v||0),0)/tw;
+  const p=border-def;
+  if(!lim)return mx;
+  if(p>=lim)return mx;
+  if(p>=0)return mn+(mx-mn)*p/lim;
+  if(p>=-lim)return Math.max(1,mn+(mn-1)*p/lim);
+  return 1;
+}
+function enemyTargets(st,part){
+  const alive=st.units.filter(u=>u.front&&!u.down);
+  if(!alive.length)return [];
+  const tt=part.targetType||'Single';
+  if(tt==='All'||tt==='AllyAll'||tt==='AllyFront')return alive.map(u=>u.i);
+  const prov=alive.find(u=>u.effects.some(e=>e.type==='provoke'));
+  if(prov)return [prov.i];
+  // 单体目标：游戏里随机。opt.enemyTargeting='spread' 按期望平均分摊到存活前卫；缺省 'worst' 取“剩余 DP+HP 比例最低”的前卫（保守）
+  if(st.ctx.opt.enemyTargeting==='spread'){flag(st,'approx','敌方单体攻击按期望平均分摊');return alive.map(u=>u.i);}
+  if(st.ctx.opt.enemyTargeting==='random'&&st.ctx.opt.rng)return [alive[Math.floor(st.ctx.opt.rng()*alive.length)].i];
+  flag(st,'approx','敌方单体攻击按最危险目标（剩余比例最低）');
+  const ratio=u=>{const m=st.ctx.party[u.i];return m.dpMax+m.hpMax>0?(u.dp+u.hp)/(m.dpMax+m.hpMax):1;};
+  return [alive.sort((a,b)=>ratio(a)-ratio(b))[0].i];
+}
+function enemyAttack(st,part,sk){
+  const E=st.ctx.enemy,mult=(E.atkRate??100)/100*(1+st.enemy.effects.filter(e=>e.type==='enemyAttackUp').reduce((a,e)=>a+e.size,0)/100);
+  const vary=st.ctx.opt.enemyVariance==='random'&&st.ctx.opt.rng?0.9+0.2*st.ctx.opt.rng():st.ctx.opt.enemyVariance??1.1;
+  const tt=part.targetType||'Single',targets=enemyTargets(st,part);
+  const share=st.ctx.opt.enemyTargeting==='spread'&&!(tt==='All'||tt==='AllyAll'||tt==='AllyFront')&&targets.length>1?1/targets.length:1;
+  for(const i of targets){
+    const u=st.units[i],m=st.ctx.party[i];if(!(m.dpMax>0)){flag(st,'approx','有成员缺 DP/HP 面板，不计受伤');continue;}
+    const stats=memberStats(st,i);
+    // 遭遇战卡「冰光暗领域中 敌方行动时全体防御 +30%（1 回合）」：按另加 30% 计（不与技能防御上升抢槽，推定）
+    const zoneDef=st.cards?.has('zoneDef30')&&st.field&&CARD_ZONE.includes(st.field.element)?30:0;
+    const def=Math.min(0.9,(sumSize(slotSelect(u.effects.filter(e=>!e.passive),'defenseUp',2))+zoneDef)/100);
+    const pdef=Math.min(0.9,u.effects.filter(e=>e.type==='defenseUp'&&e.passive).reduce((a,e)=>a+e.size,0)/100);
+    const taken=u.effects.filter(e=>e.type==='takenUp').reduce((a,e)=>a+e.size,0)/100;
+    const mk=markOf(st,i),markCut=mk&&mk.level>=R.MARK_EFFECT.damageTaken?0.9:1;
+    const dmg=part.skillType==='AttackFixedDamageDefinitely'?(part.power?.[0]||0)
+      :enemyAttackPower(part,stats,E.border)*mult*(1+taken)*(1-def)*(1-pdef)*markCut*vary*share;
+    damageAlly(st,i,dmg,sk);
+    // 次数型防御上升（遭遇战卡「防御力 +50%（2 次）」）：每受一次攻击消耗 1 次
+    if(u.effects.some(e=>e.hitUses)){for(const e of u.effects)if(e.hitUses&&e.uses>0)e.uses--;u.effects=u.effects.filter(e=>!e.hitUses||e.uses>0);}
+  }
+}
+function damageAlly(st,i,amount,sk){
+  const u=st.units[i];if(u.down||!(amount>0))return;
+  // DP 清零 = 倒下（仍可行动，之后的伤害扣 HP；普通 DP 回复无效，需复活类技能）
+  const toDp=Math.min(u.dp,amount);u.dp-=toDp;let rest=amount-toDp;
+  if(u.dp<=0&&!u.dpBroken){u.dpBroken=true;if(st.log)st.log.push({t:'dpBreak',turn:st.turn,unit:i});}
+  if(rest>0){u.hp=Math.max(0,u.hp-rest);}
+  if(st.log)st.log.push({t:'hurt',turn:st.turn,unit:i,amount:Math.round(amount),dp:Math.round(u.dp),hp:Math.round(u.hp),skill:sk?.name||sk?.label});
+  // 失败判定：任何一名成员 HP 清零即战斗失败（用户 2026-11-09 说明）
+  if(u.hp<=0){u.down=true;if(st.log)st.log.push({t:'down',turn:st.turn,unit:i});if(!st.wiped)st.wiped=st.turn;}
+}
+/** 回复量：回復能力 min–max 按施放者加权能力插值（与增益效果量同一曲线），技能等级成长按 powerTable。 */
+function healAmount(st,actor,skill,part){
+  const tbl=powerTable(part,skill),lv=Math.min(skill.level||1,tbl.min.length);
+  const mn=tbl.min[lv-1]??0,mx=tbl.max[lv-1]??mn,lim=part.diffForMax||0;
+  if(!lim||!part.parameters)return mx;
+  const a=weightedStatOf(part.parameters,memberStats(st,actor));
+  return a>lim?mx+(a-lim)*R.BUFF_OVER_LIMIT_SLOPE*mx:mn+(mx-mn)*Math.max(0,a)/lim;
+}
+function weightedStatOf(p,stats){const t=Object.values(p).reduce((a,b)=>a+(b||0),0);return t?Object.entries(p).reduce((a,[k,v])=>a+(stats[k]||0)*(v||0),0)/t:0;}
+function healDp(st,i,amount,part){
+  const u=st.units[i],m=st.ctx.party[i];if(u.down||u.dpBroken||!(m.dpMax>0))return; // 倒下（DP 0）时普通回复无效
+  const cap=m.dpMax*Math.max(1,part?.value?.[0]>1&&part.value[0]<=2?part.value[0]:1);
+  amount*=1+(st.mods.healUp||0)/100;
+  u.dp=Math.min(Math.max(u.dp,cap),u.dp+amount);if(u.dp>cap&&!(part?.value?.[0]>1))u.dp=Math.min(u.dp,m.dpMax);
+}
+/** 防御上升效果量：主数据 power 为 min/max，按施放者能力插值；被动常驻值取 power[0]。 */
+function defenseSize(st,actor,skill,part){
+  const [mn,mx]=part.power||[0,0];
+  if(!mx||!part.parameters||!part.diffForMax)return (mx||mn)*100;
+  const a=weightedStatOf(part.parameters,memberStats(st,actor));
+  return Math.min(mx,mn+(mx-mn)*Math.max(0,a)/part.diffForMax)*100;
+}
+
+/**
+ * 设定一个阶段的敌人队列（遭遇战等多敌阶段）：依次作为目标，其余存活敌人照常行动；全体攻击溅射到其余敌人。
+ * 当前目标被击破后 advanceTarget 切到下一个；全部击破时 st.killedTurn 保留（阶段完成）。
+ */
+export function setPhase(st,enemies){
+  st.queue=enemies.map(e=>({enemy:e,state:freshEnemyState(e),dead:false}));
+  st.qi=0;st.killedTurn=0;st.phaseShownStart=st.shownDamage||0;st.phaseDamageStart=st.totalDamage||0;focusTarget(st);
+  if(st.cards?.size)cardBattleStart(st);
+}
+
+// ---------------------------------------------------------------- 遭遇战战术卡钩子（卡片定义见 ../cards.mjs）
+const CARD_ZONE=['ice','light','dark'];
+/** DP 比例（DP 已破 = 0）。“DP 突破上限” = 比例 > 1。 */
+function dpRatio(st,i){const m=st.ctx.party[i],u=st.units[i];return m.dpMax>0&&!u.dpBroken&&!u.down?u.dp/m.dpMax:0;}
+/** 对阶段内全部存活敌人（无队列时只有当前目标）执行。 */
+function forEachEnemy(st,f){if(st.queue){for(const q of st.queue)if(!q.dead)f(q.state);}else f(st.enemy);}
+function raiseDisaster(es,delta){
+  let e=es.effects.find(x=>x.status==='Disaster');
+  if(!e){e={type:'status',status:'Disaster',level:0,size:0,src:'card',owner:0,uses:null,turns:null,currentOnly:false,id:++effSeq};es.effects.push(e);}
+  e.level=Math.min(99,(e.level||0)+delta);e.size=e.level;
+}
+function cardFieldSet(st,info){
+  if(info?.passive)return; // 只算“以主动技能展开”
+  if(st.cards?.has('fieldMorale3'))for(const u of st.units)u.morale=Math.min(R.MORALE_TOKEN_STACK_MAX,(u.morale||0)+3);
+  if(st.cards?.has('fieldOd30'))addOd(st,30);
+}
+function cardTurnStartUnit(st,u){
+  if(!st.cards?.size)return;
+  if(st.cards.has('fieldSp3')&&st.field&&CARD_ZONE.includes(st.field.element))healSp(st,u.i,3,null);
+  if(st.cards.has('dpOverSp5')&&dpRatio(st,u.i)>1)healSp(st,u.i,5,null);
+  if(st.cards.has('breakerSp3')&&st.ctx.party.filter(m=>m.role==='Breaker').length>=2)healSp(st,u.i,3,null);
+}
+function cardBattleStart(st){
+  const c=st.cards;
+  if(c.has('dpOverOd10')){const n=st.units.filter(u=>dpRatio(st,u.i)>1).length;if(n)addOd(st,10*n);}
+  if(c.has('dp120All50')){
+    for(const u of st.units)u.effects=u.effects.filter(e=>e.src!=='card:dp120All50');
+    if(st.units.filter(u=>dpRatio(st,u.i)>=1.2).length>=4)for(const u of st.units)u.effects.push({type:'statUp',stat:'all',size:50,passive:true,uses:null,turns:null,currentOnly:false,src:'card:dp120All50',id:++effSeq});
+  }
+  if(c.has('breakerUndermine')&&st.ctx.party.filter(m=>m.role==='Breaker').length>=2){
+    forEachEnemy(st,es=>{if(!es.effects.some(e=>e.status==='Undermine'))es.effects.push({type:'status',status:'Undermine',size:0,src:'card',owner:0,uses:null,turns:null,currentOnly:false,id:++effSeq});});
+    flag(st,'approx','战术卡「敌全体蝕」只记状态，未计伤害');
+  }
+}
+function cardBreak(st){
+  const c=st.cards;if(!c?.size)return;
+  if(c.has('breakerOd30'))addOd(st,30);
+  if(c.has('breakerBreakDef50'))forEachEnemy(st,es=>{if(!es.effects.some(e=>e.src==='card:breakDef50'))es.effects.push({type:'defenseDown',size:50,passive:true,permanent:true,src:'card:breakDef50',turns:null,uses:null,currentOnly:false,id:++effSeq});});
+  if(c.has('breakerBreakDp30'))st.units.forEach((u,k)=>healDp(st,k,0.3*st.ctx.party[k].dpMax,{value:[1.8]}));
+}
+/** 行动开始时判定的卡：暴击率、领域同属性技能攻击/暴伤、DP 溢出技能攻击。 */
+function cardMods(st,actor,el,info,mods){
+  const c=st.cards;
+  if(c.has('critRate100'))mods.passiveCritRateUp+=100;
+  const zone=st.field&&CARD_ZONE.includes(st.field.element)&&st.field.element===el;
+  if(zone&&c.has('zoneAtk300')&&!info.normal)mods.passiveAttackUp+=300;
+  if(zone&&c.has('zoneCrit100'))mods.passiveCritDamageUp+=100;
+  if(!info.normal){
+    if(c.has('dpOverAtk500')&&dpRatio(st,actor)>1)mods.passiveAttackUp+=500;
+    if(c.has('dp150Atk200')){const n=st.units.filter(u=>dpRatio(st,u.i)>=1.5).length;mods.passiveAttackUp+=200*n;}
+  }
+}
+function focusTarget(st){
+  const q=st.queue[st.qi],alive=st.queue.filter(x=>!x.dead).length;
+  st.ctx={...st.ctx,enemy:{...q.enemy,others:Math.max(0,alive-1)}};st.enemy=q.state;
+}
+function advanceTarget(st){
+  if(!st.queue||st.enemy.hp>0)return;
+  const cur=st.queue[st.qi];if(!cur.dead){cur.dead=true;if(st.log)st.log.push({t:'kill',turn:st.turn,name:cur.enemy.name});}
+  const next=st.queue.findIndex(x=>!x.dead);
+  if(next<0)return; // 阶段全部击破
+  st.qi=next;st.killedTurn=0;focusTarget(st);
+}
+/** 敌方状态（DP 槽、HP、破坏率、行动指针）。遭遇战换目标时用。 */
+export function freshEnemyState(enemy){
+  return {dp:enemy.dp.slice(),hp:enemy.hp,dr:enemy.initialDestruction||1,broken:!enemy.dp.some(x=>x>0),effects:[],ptr:{dp:0,hp:0},once:{}};
+}
+/** 以另一个敌人的身份行动（遭遇战同阶段的其余存活敌人）。 */
+export function enemyActAs(st,enemy,state){
+  const keepE=st.ctx.enemy,keepS=st.enemy;
+  st.ctx={...st.ctx,enemy};st.enemy=state;
+  try{enemyAct(st);}finally{st.ctx={...st.ctx,enemy:keepE};st.enemy=keepS;}
+}
+function enemyAct(st){
+  const E=st.ctx.enemy,en=st.enemy,phase=en.broken&&E.pattern.hp?'hp':'dp';
+  const pat=E.pattern[phase];
+  if(!pat?.entries?.length)return;
+  const orders=[...new Set(pat.entries.filter(x=>!x.preemptive).map(x=>x.order))].sort((a,b)=>a-b);
+  if(!orders.length)return;
+  let guard=0,entry=null;
+  while(guard++<orders.length*2){
+    const o=orders[en.ptr[phase]%orders.length];en.ptr[phase]++;
+    const cands=pat.entries.filter(x=>x.order===o&&!x.preemptive&&!(x.once&&en.once[phase+o]));
+    if(!cands.length)continue;
+    entry=cands.sort((a,b)=>(b.weight||0)-(a.weight||0))[0];
+    if(cands.length>1||entry.condition)flag(st,'approx','敌方行动有权重/条件分支');
+    if(entry.once)en.once[phase+o]=1;
+    break;
+  }
+  if(!entry)return;
+  for(const sid of entry.skills||[]){
+    const sk=E.skills.find(s=>s.id===sid);if(!sk)continue;
+    for(const p of sk.parts||[])enemyPart(st,p,sk);
+    if(st.log)st.log.push({t:'enemy',turn:st.turn,skill:sk.name||sk.label});
+  }
+}
+function enemyPart(st,p,sk){
+  const t=p.skillType;
+  if(t==='AttackSkill'||t==='AttackFixedDamageDefinitely'){enemyAttack(st,p,sk);return;}
+  if(t==='AttackUp'){st.enemy.effects.push({type:'enemyAttackUp',size:(p.power?.[0]||0)*100,...duration(p)});return;}
+  if(t==='DefenseDown'&&(p.targetType||'').startsWith('Single')||t==='DefenseDown'&&p.targetType==='All'){
+    for(const i of enemyTargets(st,p))addEffect(st.units[i].effects,{type:'takenUp',size:(p.power?.[1]||p.power?.[0]||0)*100,src:sk?.label,owner:-1,enemyEnd:true,...duration(p)});return;}
+  if(t==='DefenseUp')st.ctx.enemy.damageReductionPercent=(st.ctx.enemy.damageReductionPercent||0); // 敌方防御上升未建模为减伤（计算器需手填）
+  if(t==='OverDrivePointDown')st.od=Math.max(0,st.od-(p.power?.[0]||0)*100);
+  else if(t==='DamageSp'||t==='SpecifySpDamage'){for(const u of st.units.filter(x=>x.front))u.sp=t==='SpecifySpDamage'?Math.min(u.sp,p.power?.[0]||0):Math.max(0,u.sp-(p.power?.[0]||0));}
+  else if(t==='DamageRateValueDown')st.enemy.dr=Math.max(1,st.enemy.dr-(p.power?.[0]||0));
+  else if(t==='RemoveSpecialStatus'){/* 解除我方增益：未建模 */flag(st,'approx','敌方解除增益未模拟');}
+  else if(!['AttackSkill','AttackFixedDamageDefinitely','Nothing','AttackUp','ChargeStep','Charge','HealDpRate','HealDp','DefenseUp'].includes(t))flag(st,'approx','敌方效果未模拟:'+t);
+}
+
+// ---------------------------------------------------------------- 场景规则
+
+function applyRules(st,timing){
+  for(const r of st.ctx.enemy.rules||[]){
+    const timings=r.timing||[];
+    if(timing==='OnBattleStart'&&!(timings.includes('OnBattleStart')||timings.includes('OnFirstBattleStart')))continue;
+    if(timing==='OnEveryTurn'){
+      if(!timings.includes('OnEveryTurn'))continue;
+      const iv=Math.max(1,r.interval||1),term=r.term>0?r.term:99;
+      const first=iv===1?1:iv;
+      if(st.turn<first||(st.turn-first)%iv!==0||Math.floor((st.turn-first)/iv)>=term)continue;
+    }
+    // 遭遇战等“对我方成员施加技能部件”的规则（SkillPart / Member）
+    if(r.type==='SkillPart'&&r.target==='Member'){
+      const sk={label:'rule'+r.id,name:r.name,level:1,maxLevel:1,parts:r.parts||[]};
+      for(const p of r.parts||[]){const v=p.power?.[0]||0;
+        if(p.skillType==='ZoneUpEternal')st.mods.zoneRule=(st.mods.zoneRule||0)+v*100;   // 领域效果量 +X% 且永续
+        else if(p.skillType==='HealUp')st.mods.healUp=(st.mods.healUp||0)+v*100;        // DP 回复量 +X%
+        else applyPart(st,0,sk,p,{passive:true});}
+      continue;
+    }
+    for(const p of r.parts||[]){
+      const v=p.power?.[0]||0;
+      switch(p.skillType){
+        case 'DefenseDown':
+          if(r.target==='Enemy'||!r.target)addEffect(st.enemy.effects,{type:'defenseDown',size:v*100,passive:true,permanent:true,src:'rule'+r.id,turns:null,uses:null});
+          break;
+        case 'DamageRateResistUp':st.ctx.enemy.devastationResistancePercent=(st.ctx.enemy.devastationResistancePercent||0)+v*100;break;
+        case 'OverDriveRateUp':st.mods.odGain=(st.mods.odGain||0)+v;break;
+        case 'SpecifySpDamage':for(const u of st.units)if(u.front)u.sp=Math.min(u.sp,v);break;
+        case 'AttackUp':case 'HealDown':break;
+        default:flag(st,'approx','规则效果未模拟:'+p.skillType);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- 汇总
+
+export function bestTurnDamage(st){return Math.max(0,...st.turnDamage);}
+
+export function stateKey(st){
+  const effectKey=e=>[e.type,e.status||'',e.element||'',e.skillLabel||'',Math.round((e.size||0)*100),e.level||0,Math.round(e.damage||0),e.statDown||0,e.uses??'',e.turns??'',e.limitType||'',e.src||''].join('~');
+  const uses=x=>Object.entries(x.uses).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>k+v).join(',');
+  const u=st.units.map(x=>`${Math.round(x.sp*2)}|${x.ep}|${x.front?1:0}|${x.reinforced||''}${x.immPending||''}|${x.extra}|${x.tokens}|${x.morale}|${uses(x)}|${x.effects.map(effectKey).sort().join(',')}`).join('/');
+  const e=`${Math.round(st.enemy.dp.reduce((a,b)=>a+b,0)/1000)}|${Math.round(st.enemy.hp/1000)}|${Math.round(st.enemy.dr*100)}|${st.enemy.ptr.dp},${st.enemy.ptr.hp}|${st.enemy.effects.map(effectKey).sort().join(',')}`;
+  const pc=Object.entries(st.passiveCount).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>k+v).join(',');
+  const ed=st.ctx.opt.teamElement?JSON.stringify(st.skillDamageByElement):'';
+  return `${st.turn}:${st.round}:${st.odLevel}:${st.odRounds}:${st.acted}:${Math.round(st.od)}:${st.trans?st.trans.gauge+(st.trans.active?'!':''):''}:${st.field?st.field.element+st.field.turns:''}:${st.territory?st.territory.name+(st.territory.active?'!':''):''}:${Math.round(bestTurnDamage(st)/1000)}:${pc}:${u}:${e}:${ed}`;
+}
+
+// ---------------------------------------------------------------- 伤害计算器用
+
+/** 只施加技能里的增益/减益等非攻击部件（伤害计算器“预先施加”用），不扣 SP、不计次数。 */
+export function applyEffectsOnly(st,i,k){
+  const skill=st.ctx.party[i].skills[k];if(!skill)return;
+  const flat=s=>(s.parts||[]).flatMap(p=>(p.skillType==='SkillCondition'||p.skillType==='SkillSwitch')?[p]:[p]);
+  for(const p of flat(skill)){
+    if(ATTACK_PART_TYPES.has(p.skillType))continue;
+    if(p.skillType==='SkillCondition'||p.skillType==='SkillSwitch'){
+      const br=p.branches||[];const pick=check(st,p.cond||skill.cond,i,{})?br[0]:br[1]||br[0];
+      if(pick)for(const q of pick.parts||[])if(!ATTACK_PART_TYPES.has(q.skillType))applyPart(st,i,{...pick,level:skill.level},q,{});
+      continue;
+    }
+    applyPart(st,i,skill,p,{});
+  }
+}
+
+/** 预览一次攻击：返回 computeAttack 的完整结果与所用加成（不改变状态）。 */
+export function previewAttack(st,i,k,{level}={}){
+  const m=st.ctx.party[i],skill=m.skills[k];
+  const flat=(skill.parts||[]).flatMap(p=>p.branches?(check(st,p.cond||skill.cond,i,{})?p.branches[0]:p.branches[1]||p.branches[0])?.parts||[]:[p]);
+  const part=flat.find(p=>ATTACK_PART_TYPES.has(p.skillType));
+  if(!part)return null;
+  const model={...attackModel(skill,part,{characterId:m.charId,styleId:m.styleId}),tearEnhancementType:m.tearType};
+  if(st.units[i].reinforced)model.element=st.units[i].reinforced;
+  const mods=collectMods(st,i,model,{});
+  const E=st.ctx.enemy,en=st.enemy;
+  const res=computeAttack({skill:model,level:level||skill.level||1,stats:memberStats(st,i),enemy:E,mods,state:{destructionRate:en.dr,hp:en.hp,dp:en.dp}});
+  return {model,mods,res,stats:memberStats(st,i)};
+}

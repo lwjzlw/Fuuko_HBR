@@ -1,0 +1,2224 @@
+{
+ "schemaVersion": 1,
+ "generatedAt": "2026-11-09T01:48:54+00:00",
+ "sources": [
+  {
+   "table": "score_attack",
+   "url": "https://master.hbr.quest/v1/score_attack.json",
+   "sha256": "658c1c37c3c94a169d1a47aefff115904d7124a1dcb175c12c2dde1d210d5df0"
+  },
+  {
+   "table": "dimension_battle",
+   "url": "https://master.hbr.quest/v1/dimension_battle.json",
+   "sha256": "59c449f5e2db7425ec9e4f3e1bae5b3a82842b490ee922a2983a75163db4b038"
+  },
+  {
+   "table": "wave_battle",
+   "url": "https://master.hbr.quest/v1/wave_battle.json",
+   "sha256": "d2d91ca24a9815b1724707fe95f2c53676ab5b65ad5f6477fc7bf320af0f42f5"
+  },
+  {
+   "table": "enemies",
+   "url": "https://master.hbr.quest/v1/enemies.json",
+   "sha256": "61870bb6024eb234da4b516bf6d75d7020b69fed12c15b2eaf8aa789415eba15"
+  }
+ ],
+ "enemyDetailUrl": "https://master.hbr.quest/v1/enemies/<label>.json",
+ "notes": [
+  "数据来自 hbr.quest 公开主数据，名称优先繁中，缺失时用日文原名。",
+  "行动表按 order 排列；weight／condition 的实际选择规则未经实战验证。",
+  "计分公式参照 hbr.quest 计算器（第三方实现），未经游戏内结算核对。"
+ ],
+ "missingDetail": [],
+ "events": [
+  {
+   "kind": "dimension",
+   "label": "dimension_016",
+   "id": 191000016,
+   "name": "dimension_016",
+   "inDate": "2026-10-02 02:00:00+00:00",
+   "outDate": "2026-11-27 01:59:59+00:00",
+   "bosses": [
+    "CorollaCutter",
+    "OctopusTailβ",
+    "MolArmsα",
+    "AbyssKnockerS",
+    "VeiledDeath",
+    "疫災的招引者",
+    "厄災的主導者"
+   ],
+   "stages": 20,
+   "rules": 0,
+   "file": "dimension/dimension_016.json",
+   "withActions": 19,
+   "enemyCount": 19
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_015",
+   "id": 191000015,
+   "name": "dimension_015",
+   "inDate": "2026-08-02 13:00:00+00:00",
+   "outDate": "2026-10-02 01:59:59+00:00",
+   "bosses": [
+    "Marionette",
+    "WireFrameβ",
+    "Slasher",
+    "CatHornβ",
+    "ElephantWhip",
+    "ArachneLine",
+    "狂奔的異形野獸"
+   ],
+   "stages": 20,
+   "rules": 0,
+   "file": "dimension/dimension_015.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_014",
+   "id": 191000014,
+   "name": "dimension_014",
+   "inDate": "2026-05-22 02:00:00+00:00",
+   "outDate": "2026-08-02 12:59:59+00:00",
+   "bosses": [
+    "CatHornβ",
+    "CorollaKnife",
+    "ClayKnocker",
+    "MolArmsβ",
+    "VeiledDeath",
+    "SpiralCone",
+    "峙立絕界的蝕樹"
+   ],
+   "stages": 20,
+   "rules": 0,
+   "file": "dimension/dimension_014.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_013",
+   "id": 191000013,
+   "name": "dimension_013",
+   "inDate": "2026-03-27 02:00:00+00:00",
+   "outDate": "2026-05-22 01:59:59+00:00",
+   "bosses": [
+    "CatHornγ",
+    "WireFrameβ",
+    "Slasher",
+    "OctopusTailγ",
+    "MeteorScooper",
+    "PillarGuardian",
+    "統御天穹的骸翼"
+   ],
+   "stages": 20,
+   "rules": 0,
+   "file": "dimension/dimension_013.json",
+   "withActions": 11,
+   "enemyCount": 11
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_012",
+   "id": 191000012,
+   "name": "dimension_012",
+   "inDate": "2026-02-01 13:00:00+00:00",
+   "outDate": "2026-03-27 01:59:59+00:00",
+   "bosses": [
+    "ClayKnocker",
+    "WireFrameβ",
+    "DiamondEyeS",
+    "ArachneBlade",
+    "RumblingMole",
+    "佇立虛空的狂風"
+   ],
+   "stages": 17,
+   "rules": 0,
+   "file": "dimension/dimension_012.json",
+   "withActions": 11,
+   "enemyCount": 11
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_011",
+   "id": 191000011,
+   "name": "dimension_011",
+   "inDate": "2025-11-28 02:00:00+00:00",
+   "outDate": "2026-02-01 12:59:59+00:00",
+   "bosses": [
+    "BigotryGate",
+    "CorollaScythe",
+    "WireFrameβ",
+    "AbyssKnocker",
+    "SwellCrow",
+    "FlesiaYellow",
+    "棲息在峽谷的幽鬼"
+   ],
+   "stages": 17,
+   "rules": 0,
+   "file": "dimension/dimension_011.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_010",
+   "id": 191000010,
+   "name": "dimension_010",
+   "inDate": "2025-10-03 02:00:00+00:00",
+   "outDate": "2025-11-28 01:59:59+00:00",
+   "bosses": [
+    "CatHornβ",
+    "WireFrameα",
+    "Slasher",
+    "Marionette",
+    "BarrelWalker",
+    "GiraffeDark",
+    "侵蝕萬象的妖花"
+   ],
+   "stages": 17,
+   "rules": 0,
+   "file": "dimension/dimension_010.json",
+   "withActions": 14,
+   "enemyCount": 14
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_009",
+   "id": 191000009,
+   "name": "dimension_009",
+   "inDate": "2025-08-10 02:00:00+00:00",
+   "outDate": "2025-10-03 01:59:59+00:00",
+   "bosses": [
+    "BigotryGate",
+    "CatHornβ",
+    "Marionette",
+    "VeiledDeath",
+    "BullyCrab",
+    "ArachneLine",
+    "持續蛻變的不滅圓環"
+   ],
+   "stages": 17,
+   "rules": 0,
+   "file": "dimension/dimension_009.json",
+   "withActions": 11,
+   "enemyCount": 11
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_008",
+   "id": 191000008,
+   "name": "dimension_008",
+   "inDate": "2025-04-25 02:00:00+00:00",
+   "outDate": "2025-05-09 01:59:59+00:00",
+   "bosses": [
+    "BigotryGate",
+    "CorollaScythe",
+    "WireFrameβ",
+    "SwellCrow",
+    "IvoryScooper",
+    "GiraffeThunder",
+    "疾馳的異形野獸"
+   ],
+   "stages": 13,
+   "rules": 0,
+   "file": "dimension/dimension_008.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_007",
+   "id": 191000007,
+   "name": "dimension_007",
+   "inDate": "2025-01-03 02:00:00+00:00",
+   "outDate": "2025-01-17 01:59:59+00:00",
+   "bosses": [
+    "CatHornβ",
+    "CorollaKnife",
+    "ClayKnocker",
+    "SlimySerpentβ",
+    "CrestHopper",
+    "RedPillarGuardian",
+    "帶來災禍的鱗翔"
+   ],
+   "stages": 13,
+   "rules": 0,
+   "file": "dimension/dimension_007.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_006",
+   "id": 191000006,
+   "name": "dimension_006",
+   "inDate": "2024-09-06 02:00:00+00:00",
+   "outDate": "2024-09-20 01:59:59+00:00",
+   "bosses": [
+    "KillerHopper",
+    "CatHornα",
+    "DiamondEyeS",
+    "AbyssKnockerS",
+    "沙海中蠢動的歌女"
+   ],
+   "stages": 13,
+   "rules": 0,
+   "file": "dimension/dimension_006.json",
+   "withActions": 11,
+   "enemyCount": 11
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_005",
+   "id": 191000005,
+   "name": "dimension_005",
+   "inDate": "2024-06-14 02:00:00+00:00",
+   "outDate": "2024-06-28 01:59:59+00:00",
+   "bosses": [
+    "CrestHopper",
+    "HealHopper",
+    "BulbFlea",
+    "DeathDoll",
+    "WireFrameβ",
+    "CrowHorse",
+    "SlimySerpentγ",
+    "棲息在峽谷的幽鬼"
+   ],
+   "stages": 14,
+   "rules": 0,
+   "file": "dimension/dimension_005.json",
+   "withActions": 17,
+   "enemyCount": 17
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_004",
+   "id": 191000004,
+   "name": "dimension_004",
+   "inDate": "2024-03-22 02:00:00+00:00",
+   "outDate": "2024-04-05 01:59:59+00:00",
+   "bosses": [
+    "CrestHopper",
+    "ClayKnocker",
+    "WireFrameβ",
+    "HealHopper",
+    "OctopusTailγ",
+    "BarrelWalker",
+    "輪轉的凶禍"
+   ],
+   "stages": 22,
+   "rules": 0,
+   "file": "dimension/dimension_004.json",
+   "withActions": 19,
+   "enemyCount": 19
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_003",
+   "id": 191000003,
+   "name": "dimension_003",
+   "inDate": "2023-12-22 02:00:00+00:00",
+   "outDate": "2024-01-04 01:59:59+00:00",
+   "bosses": [
+    "CrestHopper",
+    "HealHopper",
+    "CatHornα",
+    "NeedleBird",
+    "FireKnocker",
+    "IceKnocker",
+    "ThunderKnocker",
+    "IvoryScooper",
+    "宣告終焉的邂逅"
+   ],
+   "stages": 14,
+   "rules": 0,
+   "file": "dimension/dimension_003.json",
+   "withActions": 15,
+   "enemyCount": 15
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_002",
+   "id": 191000002,
+   "name": "dimension_002",
+   "inDate": "2023-10-06 02:00:00+00:00",
+   "outDate": "2023-10-16 01:59:59+00:00",
+   "bosses": [
+    "CrestHopper",
+    "HealHopper",
+    "CrowHorse",
+    "DiamondEyeS",
+    "WireFrameγ",
+    "VeiledDeath",
+    "厄災的主導者",
+    "疫災的招引者"
+   ],
+   "stages": 14,
+   "rules": 0,
+   "file": "dimension/dimension_002.json",
+   "withActions": 19,
+   "enemyCount": 19
+  },
+  {
+   "kind": "dimension",
+   "label": "dimension_001",
+   "id": 191000001,
+   "name": "dimension_001",
+   "inDate": "2023-06-24 02:00:00+00:00",
+   "outDate": "2023-07-03 01:59:59+00:00",
+   "bosses": [
+    "KillerHopper",
+    "VeiledDeath",
+    "BulbFlea",
+    "ArachneLine",
+    "吞噬希望者"
+   ],
+   "stages": 9,
+   "rules": 0,
+   "file": "dimension/dimension_001.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack104",
+   "id": 145000104,
+   "name": "#104",
+   "inDate": "2026-10-16 02:00:00+00:00",
+   "outDate": "2026-10-30 01:59:59+00:00",
+   "bosses": [
+    "RumblingMole・Alterna"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack104.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack103",
+   "id": 145000103,
+   "name": "#103",
+   "inDate": "2026-10-02 02:00:00+00:00",
+   "outDate": "2026-10-16 01:59:59+00:00",
+   "bosses": [
+    "FallenHalo・Alterna"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack103.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack102",
+   "id": 145000102,
+   "name": "#102",
+   "inDate": "2026-09-18 02:00:00+00:00",
+   "outDate": "2026-10-02 01:59:59+00:00",
+   "bosses": [
+    "命吹雪"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack102.json",
+   "withActions": 40,
+   "enemyCount": 40
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack101",
+   "id": 145000101,
+   "name": "#101 Mysterious Attack",
+   "inDate": "2026-08-21 02:00:00+00:00",
+   "outDate": "2026-09-04 01:59:59+00:00",
+   "bosses": [
+    "MysArms・Alterna"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack101.json",
+   "withActions": 16,
+   "enemyCount": 16
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack100",
+   "id": 145000100,
+   "name": "#100 Impact Returns",
+   "inDate": "2026-08-02 13:00:00+00:00",
+   "outDate": "2026-08-21 01:59:59+00:00",
+   "bosses": [
+    "RedCrimson・Alterna"
+   ],
+   "stages": 40,
+   "rules": 9,
+   "file": "sa/scoreAttack100.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack99",
+   "id": 145000099,
+   "name": "#99 The Divine Hammer Descends",
+   "inDate": "2026-07-17 02:00:00+00:00",
+   "outDate": "2026-08-02 12:59:59+00:00",
+   "bosses": [
+    "ThorHammer・Alterna"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack99.json",
+   "withActions": 40,
+   "enemyCount": 40
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack98",
+   "id": 145000098,
+   "name": "#98 Ambush of the Past",
+   "inDate": "2026-06-19 02:00:00+00:00",
+   "outDate": "2026-07-03 01:59:59+00:00",
+   "bosses": [
+    "OchreCrow"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack98.json",
+   "withActions": 7,
+   "enemyCount": 7
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack97",
+   "id": 145000097,
+   "name": "#97 Change Drastically",
+   "inDate": "2026-06-05 02:00:00+00:00",
+   "outDate": "2026-06-19 01:59:59+00:00",
+   "bosses": [
+    "KaleidoOuroboros・Cosmos"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack97.json",
+   "withActions": 40,
+   "enemyCount": 40
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack96",
+   "id": 145000096,
+   "name": "#96 There is strong shadow",
+   "inDate": "2026-05-22 02:00:00+00:00",
+   "outDate": "2026-06-05 01:59:59+00:00",
+   "bosses": [
+    "陰影星癌體本源"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack96.json",
+   "withActions": 7,
+   "enemyCount": 7
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack95",
+   "id": 145000095,
+   "name": "#95 Impregnable Fortress",
+   "inDate": "2026-04-24 02:00:00+00:00",
+   "outDate": "2026-05-08 01:59:59+00:00",
+   "bosses": [
+    "FortressCrab"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack95.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack94",
+   "id": 145000094,
+   "name": "#94 Endless Phantom",
+   "inDate": "2026-04-10 02:00:00+00:00",
+   "outDate": "2026-04-24 01:59:59+00:00",
+   "bosses": [
+    "FigurineHorn"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack94.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack93",
+   "id": 145000093,
+   "name": "#93 Immovable Tyrant",
+   "inDate": "2026-03-27 02:00:00+00:00",
+   "outDate": "2026-04-10 01:59:59+00:00",
+   "bosses": [
+    "RigidSerpent"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack93.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack92",
+   "id": 145000092,
+   "name": "#92 Sovereign Duo",
+   "inDate": "2026-02-27 02:00:00+00:00",
+   "outDate": "2026-03-13 01:59:59+00:00",
+   "bosses": [
+    "魔王山脇",
+    "使魔豐後"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack92.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack91",
+   "id": 145000091,
+   "name": "#91 The lurking despair",
+   "inDate": "2026-02-13 02:00:00+00:00",
+   "outDate": "2026-02-27 01:59:59+00:00",
+   "bosses": [
+    "NetherDendron"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack91.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack90",
+   "id": 145000090,
+   "name": "#90 峻厳たる司令官",
+   "inDate": "2026-02-01 13:00:00+00:00",
+   "outDate": "2026-02-13 01:59:59+00:00",
+   "bosses": [
+    "手塚"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack90.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack89",
+   "id": 145000089,
+   "name": "#89 Curse in Summer",
+   "inDate": "2026-01-16 02:00:00+00:00",
+   "outDate": "2026-02-01 12:59:59+00:00",
+   "bosses": [
+    "GriefDoll"
+   ],
+   "stages": 40,
+   "rules": 6,
+   "file": "sa/scoreAttack89.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack88",
+   "id": 145000088,
+   "name": "#88 Awakening Feather",
+   "inDate": "2025-12-26 02:00:00+00:00",
+   "outDate": "2026-01-16 01:59:59+00:00",
+   "bosses": [
+    "SkullFeather【覺醒】"
+   ],
+   "stages": 40,
+   "rules": 9,
+   "file": "sa/scoreAttack88.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack87",
+   "id": 145000087,
+   "name": "#87 Nexus Nest",
+   "inDate": "2025-11-28 02:00:00+00:00",
+   "outDate": "2025-12-12 01:59:59+00:00",
+   "bosses": [
+    "LurkFeeler"
+   ],
+   "stages": 40,
+   "rules": 2,
+   "file": "sa/scoreAttack87.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack86",
+   "id": 145000086,
+   "name": "#86 Awaken In Oblivion",
+   "inDate": "2025-11-14 02:00:00+00:00",
+   "outDate": "2025-11-28 01:59:59+00:00",
+   "bosses": [
+    "BranchSlug"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack86.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack85",
+   "id": 145000085,
+   "name": "#85 Disturbing Ferociousness",
+   "inDate": "2025-10-31 02:00:00+00:00",
+   "outDate": "2025-11-14 01:59:59+00:00",
+   "bosses": [
+    "CleaveHorse"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack85.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack84",
+   "id": 145000084,
+   "name": "#84 Mysterious Attack",
+   "inDate": "2025-10-17 02:00:00+00:00",
+   "outDate": "2025-10-31 01:59:59+00:00",
+   "bosses": [
+    "MysArms"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack84.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack83",
+   "id": 145000083,
+   "name": "#83 Flames of Jealousy",
+   "inDate": "2025-10-03 02:00:00+00:00",
+   "outDate": "2025-10-17 01:59:59+00:00",
+   "bosses": [
+    "CrazyKnocker"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack83.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack82",
+   "id": 145000082,
+   "name": "#82 Indomitable Heart",
+   "inDate": "2025-09-19 02:00:00+00:00",
+   "outDate": "2025-10-03 01:59:59+00:00",
+   "bosses": [
+    "GiantEye"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack82.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack81",
+   "id": 145000081,
+   "name": "#81 Viscoelastic Contaminant",
+   "inDate": "2025-09-05 02:00:00+00:00",
+   "outDate": "2025-09-19 01:59:59+00:00",
+   "bosses": [
+    "OozeGate"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack81.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack80",
+   "id": 145000080,
+   "name": "#80 The Wandering Lurker",
+   "inDate": "2025-08-22 02:00:00+00:00",
+   "outDate": "2025-09-05 01:59:59+00:00",
+   "bosses": [
+    "VagueKnocker"
+   ],
+   "stages": 40,
+   "rules": 3,
+   "file": "sa/scoreAttack80.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack79",
+   "id": 145000079,
+   "name": "#79 Tentacle Tantrum",
+   "inDate": "2025-08-03 13:00:00+00:00",
+   "outDate": "2025-08-22 01:59:59+00:00",
+   "bosses": [
+    "KingOctopus"
+   ],
+   "stages": 40,
+   "rules": 2,
+   "file": "sa/scoreAttack79.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack78",
+   "id": 145000078,
+   "name": "#78 Black Impact",
+   "inDate": "2025-07-18 02:00:00+00:00",
+   "outDate": "2025-08-03 12:59:59+00:00",
+   "bosses": [
+    "吞噬希望者"
+   ],
+   "stages": 40,
+   "rules": 4,
+   "file": "sa/scoreAttack78.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack77",
+   "id": 145000077,
+   "name": "#77 Repeating Karma",
+   "inDate": "2025-06-27 02:00:00+00:00",
+   "outDate": "2025-07-17 01:59:59+00:00",
+   "bosses": [
+    "DazzleEyeball"
+   ],
+   "stages": 11,
+   "rules": 6,
+   "file": "sa/scoreAttack77.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack76",
+   "id": 145000076,
+   "name": "#76 Dyspnea In The Hellfire",
+   "inDate": "2025-06-13 02:00:00+00:00",
+   "outDate": "2025-06-27 01:59:59+00:00",
+   "bosses": [
+    "FurnaceEye"
+   ],
+   "stages": 11,
+   "rules": 8,
+   "file": "sa/scoreAttack76.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack75",
+   "id": 145000075,
+   "name": "#75 Archaic Force",
+   "inDate": "2025-05-30 02:00:00+00:00",
+   "outDate": "2025-06-13 01:59:59+00:00",
+   "bosses": [
+    "TyrantWhip"
+   ],
+   "stages": 11,
+   "rules": 8,
+   "file": "sa/scoreAttack75.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack74",
+   "id": 145000074,
+   "name": "#74 Trapped In The Mist",
+   "inDate": "2025-05-16 02:00:00+00:00",
+   "outDate": "2025-05-30 01:59:59+00:00",
+   "bosses": [
+    "PhantasmGate"
+   ],
+   "stages": 11,
+   "rules": 7,
+   "file": "sa/scoreAttack74.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack73",
+   "id": 145000073,
+   "name": "#73 The Scent Of Magic",
+   "inDate": "2025-05-02 02:00:00+00:00",
+   "outDate": "2025-05-16 01:59:59+00:00",
+   "bosses": [
+    "TemptingCrow"
+   ],
+   "stages": 11,
+   "rules": 7,
+   "file": "sa/scoreAttack73.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack72",
+   "id": 145000072,
+   "name": "#72 Thread of Torment",
+   "inDate": "2025-04-04 02:00:00+00:00",
+   "outDate": "2025-04-18 01:59:59+00:00",
+   "bosses": [
+    "SnareScooper"
+   ],
+   "stages": 11,
+   "rules": 6,
+   "file": "sa/scoreAttack72.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack71",
+   "id": 145000071,
+   "name": "#71 Dead Space",
+   "inDate": "2025-03-21 02:00:00+00:00",
+   "outDate": "2025-04-04 01:59:59+00:00",
+   "bosses": [
+    "HeftyGuardian"
+   ],
+   "stages": 11,
+   "rules": 6,
+   "file": "sa/scoreAttack71.json",
+   "withActions": 7,
+   "enemyCount": 7
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack70",
+   "id": 145000070,
+   "name": "#70 Robust Caller",
+   "inDate": "2025-03-07 02:00:00+00:00",
+   "outDate": "2025-03-21 01:59:59+00:00",
+   "bosses": [
+    "HowlingCrab"
+   ],
+   "stages": 11,
+   "rules": 7,
+   "file": "sa/scoreAttack70.json",
+   "withActions": 7,
+   "enemyCount": 7
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack69",
+   "id": 145000069,
+   "name": "#69 Deeper Menace",
+   "inDate": "2025-02-21 02:00:00+00:00",
+   "outDate": "2025-03-07 01:59:59+00:00",
+   "bosses": [
+    "RoarKnocker"
+   ],
+   "stages": 11,
+   "rules": 6,
+   "file": "sa/scoreAttack69.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack68",
+   "id": 145000068,
+   "name": "#68 Chaind Disaster",
+   "inDate": "2025-02-09 02:00:00+00:00",
+   "outDate": "2025-02-21 01:59:59+00:00",
+   "bosses": [
+    "FlatHand"
+   ],
+   "stages": 11,
+   "rules": 6,
+   "file": "sa/scoreAttack68.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack67",
+   "id": 145000067,
+   "name": "#67 From the Nightmare",
+   "inDate": "2025-02-02 13:00:00+00:00",
+   "outDate": "2025-02-09 01:59:59+00:00",
+   "bosses": [
+    "DeathSlug"
+   ],
+   "stages": 106,
+   "rules": 4,
+   "file": "sa/scoreAttack67.json",
+   "withActions": 12,
+   "enemyCount": 12
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack66",
+   "id": 145000066,
+   "name": "#66 Eternal Grief",
+   "inDate": "2025-01-10 02:00:00+00:00",
+   "outDate": "2025-02-02 12:59:59+00:00",
+   "bosses": [
+    "FallenHalo"
+   ],
+   "stages": 53,
+   "rules": 9,
+   "file": "sa/scoreAttack66.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack65",
+   "id": 145000065,
+   "name": "#65 Sickle of The Nuisance",
+   "inDate": "2024-12-27 02:00:00+00:00",
+   "outDate": "2025-01-10 01:59:59+00:00",
+   "bosses": [
+    "GloomyDeath"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack65.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack64",
+   "id": 145000064,
+   "name": "#64 The End of Once Again",
+   "inDate": "2024-12-13 02:00:00+00:00",
+   "outDate": "2024-12-27 01:59:59+00:00",
+   "bosses": [
+    "宣告終焉的邂逅"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack64.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack63",
+   "id": 145000063,
+   "name": "#63 Harshness Lament",
+   "inDate": "2024-11-22 02:00:00+00:00",
+   "outDate": "2024-12-13 01:59:59+00:00",
+   "bosses": [
+    "GrowlHorse"
+   ],
+   "stages": 53,
+   "rules": 9,
+   "file": "sa/scoreAttack63.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack62",
+   "id": 145000062,
+   "name": "#62 Overrun by Siege",
+   "inDate": "2024-10-25 02:00:00+00:00",
+   "outDate": "2024-11-08 01:59:59+00:00",
+   "bosses": [
+    "RegimeHorn"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack62.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack61",
+   "id": 145000061,
+   "name": "#61 Tragedy Pouring Down",
+   "inDate": "2024-10-11 02:00:00+00:00",
+   "outDate": "2024-10-25 01:59:59+00:00",
+   "bosses": [
+    "CannonWalker",
+    "GuardianCrab"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack61.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack60",
+   "id": 145000060,
+   "name": "#60 Dead Space",
+   "inDate": "2024-09-20 02:00:00+00:00",
+   "outDate": "2024-10-11 01:59:59+00:00",
+   "bosses": [
+    "HeftyGuardian"
+   ],
+   "stages": 53,
+   "rules": 9,
+   "file": "sa/scoreAttack60.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack59",
+   "id": 145000059,
+   "name": "#59 Exceed the Constraints",
+   "inDate": "2024-09-06 02:00:00+00:00",
+   "outDate": "2024-09-20 01:59:59+00:00",
+   "bosses": [
+    "FerociousKnocker"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack59.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack58",
+   "id": 145000058,
+   "name": "#58 Dyspnea In The Hellfire",
+   "inDate": "2024-08-23 02:00:00+00:00",
+   "outDate": "2024-09-06 01:59:59+00:00",
+   "bosses": [
+    "FurnaceEye"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack58.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack57",
+   "id": 145000057,
+   "name": "#57 Dominate of Tentacles",
+   "inDate": "2024-08-09 02:00:00+00:00",
+   "outDate": "2024-08-23 01:59:59+00:00",
+   "bosses": [
+    "SolidTail"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack57.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack56",
+   "id": 145000056,
+   "name": "#56 The Coming Epicenter",
+   "inDate": "2024-07-20 11:00:00+00:00",
+   "outDate": "2024-08-09 01:59:59+00:00",
+   "bosses": [
+    "RumblingMole"
+   ],
+   "stages": 53,
+   "rules": 9,
+   "file": "sa/scoreAttack56.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack55",
+   "id": 145000055,
+   "name": "#55 The Wandering Lurker",
+   "inDate": "2024-07-05 02:00:00+00:00",
+   "outDate": "2024-07-20 10:59:59+00:00",
+   "bosses": [
+    "VagueKnocker"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack55.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack54",
+   "id": 145000054,
+   "name": "#54 Virtuous Mentor",
+   "inDate": "2024-06-28 02:00:00+00:00",
+   "outDate": "2024-07-05 01:59:59+00:00",
+   "bosses": [
+    "手塚",
+    "白河 結奈"
+   ],
+   "stages": 53,
+   "rules": 3,
+   "file": "sa/scoreAttack54.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack53",
+   "id": 145000053,
+   "name": "#53 Poisonous Tracker",
+   "inDate": "2024-06-14 02:00:00+00:00",
+   "outDate": "2024-06-28 01:59:59+00:00",
+   "bosses": [
+    "PoisonScooper"
+   ],
+   "stages": 53,
+   "rules": 7,
+   "file": "sa/scoreAttack53.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack52",
+   "id": 145000052,
+   "name": "#52 Trapped In The Mist",
+   "inDate": "2024-05-31 02:00:00+00:00",
+   "outDate": "2024-06-14 01:59:59+00:00",
+   "bosses": [
+    "PhantasmGate"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack52.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack51",
+   "id": 145000051,
+   "name": "#51 Impact Tremors",
+   "inDate": "2024-05-24 02:00:00+00:00",
+   "outDate": "2024-05-31 01:59:59+00:00",
+   "bosses": [
+    "RedCrimson"
+   ],
+   "stages": 53,
+   "rules": 4,
+   "file": "sa/scoreAttack51.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack50",
+   "id": 145000050,
+   "name": "#50 Endless Phantom",
+   "inDate": "2024-05-10 02:00:00+00:00",
+   "outDate": "2024-05-24 01:59:59+00:00",
+   "bosses": [
+    "FigurineHorn"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack50.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack49",
+   "id": 145000049,
+   "name": "#49 Mysterious Attack",
+   "inDate": "2024-04-26 02:00:00+00:00",
+   "outDate": "2024-05-10 01:59:59+00:00",
+   "bosses": [
+    "MysArms"
+   ],
+   "stages": 53,
+   "rules": 6,
+   "file": "sa/scoreAttack49.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack48",
+   "id": 145000048,
+   "name": "#48 THE UPSIDE",
+   "inDate": "2024-04-05 02:00:00+00:00",
+   "outDate": "2024-04-26 01:59:59+00:00",
+   "bosses": [
+    "茅森月歌",
+    "和泉由希"
+   ],
+   "stages": 53,
+   "rules": 9,
+   "file": "sa/scoreAttack48.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack47",
+   "id": 145000047,
+   "name": "#47 Immovable Tyrant",
+   "inDate": "2024-03-22 02:00:00+00:00",
+   "outDate": "2024-04-05 01:59:59+00:00",
+   "bosses": [
+    "RigidSerpent"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack47.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack46",
+   "id": 145000046,
+   "name": "#46 Awaken In Oblivion",
+   "inDate": "2024-03-08 02:00:00+00:00",
+   "outDate": "2024-03-22 01:59:59+00:00",
+   "bosses": [
+    "BranchSlug"
+   ],
+   "stages": 66,
+   "rules": 6,
+   "file": "sa/scoreAttack46.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack45",
+   "id": 145000045,
+   "name": "#45 峻厳たる司令官",
+   "inDate": "2024-02-16 02:00:00+00:00",
+   "outDate": "2024-03-08 01:59:59+00:00",
+   "bosses": [
+    "手塚"
+   ],
+   "stages": 33,
+   "rules": 9,
+   "file": "sa/scoreAttack45.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack44",
+   "id": 145000044,
+   "name": "#44 Eternal Grief",
+   "inDate": "2024-02-04 11:00:00+00:00",
+   "outDate": "2024-02-16 01:59:59+00:00",
+   "bosses": [
+    "FallenHalo"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack44.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack43",
+   "id": 145000043,
+   "name": "#43 Black Impact",
+   "inDate": "2024-01-26 02:00:00+00:00",
+   "outDate": "2024-02-04 10:59:59+00:00",
+   "bosses": [
+    "吞噬希望者"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack43.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack42",
+   "id": 145000042,
+   "name": "#42 Qualmish Encounter",
+   "inDate": "2024-01-12 02:00:00+00:00",
+   "outDate": "2024-01-26 01:59:59+00:00",
+   "bosses": [
+    "Feeler"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack42.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack41",
+   "id": 145000041,
+   "name": "#41 Ultimate Idol",
+   "inDate": "2023-12-29 02:00:00+00:00",
+   "outDate": "2024-01-12 01:59:59+00:00",
+   "bosses": [
+    "蒼井繪梨花",
+    "水瀨莓",
+    "樋口聖華"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack41.json",
+   "withActions": 9,
+   "enemyCount": 9
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack40",
+   "id": 145000040,
+   "name": "#40 Villain Nightmare",
+   "inDate": "2023-12-15 02:00:00+00:00",
+   "outDate": "2023-12-29 01:59:59+00:00",
+   "bosses": [
+    "CoffinEye"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack40.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack39",
+   "id": 145000039,
+   "name": "#39 Erosion by Poison",
+   "inDate": "2023-12-01 02:00:00+00:00",
+   "outDate": "2023-12-15 01:59:59+00:00",
+   "bosses": [
+    "AcidSerpent"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack39.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack38",
+   "id": 145000038,
+   "name": "#38 Exceed the Constraints",
+   "inDate": "2023-11-17 02:00:00+00:00",
+   "outDate": "2023-12-01 01:59:59+00:00",
+   "bosses": [
+    "FerociousKnocker"
+   ],
+   "stages": 33,
+   "rules": 7,
+   "file": "sa/scoreAttack38.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack37",
+   "id": 145000037,
+   "name": "#37 Detestable Vice",
+   "inDate": "2023-11-03 02:00:00+00:00",
+   "outDate": "2023-11-17 01:59:59+00:00",
+   "bosses": [
+    "NimbleHorse"
+   ],
+   "stages": 33,
+   "rules": 7,
+   "file": "sa/scoreAttack37.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack36",
+   "id": 145000036,
+   "name": "#36 Threat of Icicle",
+   "inDate": "2023-10-20 02:00:00+00:00",
+   "outDate": "2023-11-03 01:59:59+00:00",
+   "bosses": [
+    "IcicleSlug"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack36.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack35",
+   "id": 145000035,
+   "name": "#35 Danger Signal",
+   "inDate": "2023-10-06 02:00:00+00:00",
+   "outDate": "2023-10-20 01:59:59+00:00",
+   "bosses": [
+    "SignalVeil"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack35.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack34",
+   "id": 145000034,
+   "name": "#34 Curse in Summer",
+   "inDate": "2023-09-22 02:00:00+00:00",
+   "outDate": "2023-10-06 01:59:59+00:00",
+   "bosses": [
+    "GriefDoll"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack34.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack33",
+   "id": 145000033,
+   "name": "#33 Indomitable Heart",
+   "inDate": "2023-09-08 02:00:00+00:00",
+   "outDate": "2023-09-22 01:59:59+00:00",
+   "bosses": [
+    "GiantEye"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack33.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack32",
+   "id": 145000032,
+   "name": "#32 恐怖纏いしYggdVeil",
+   "inDate": "2023-08-25 02:00:00+00:00",
+   "outDate": "2023-09-08 01:59:59+00:00",
+   "bosses": [
+    "YggdVeil"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack32.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack31",
+   "id": 145000031,
+   "name": "#31 Endless Phantom",
+   "inDate": "2023-08-06 02:00:00+00:00",
+   "outDate": "2023-08-25 01:59:59+00:00",
+   "bosses": [
+    "FigurineHorn"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack31.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack30",
+   "id": 145000030,
+   "name": "#30 Qualmish Encounter",
+   "inDate": "2023-07-28 02:00:00+00:00",
+   "outDate": "2023-08-06 01:59:59+00:00",
+   "bosses": [
+    "Feeler"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack30.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack29",
+   "id": 145000029,
+   "name": "スコアアタック29",
+   "inDate": "2023-07-14 02:00:00+00:00",
+   "outDate": "2023-07-28 01:59:59+00:00",
+   "bosses": [
+    "白河 結奈"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack29.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack28",
+   "id": 145000028,
+   "name": "スコアアタック28",
+   "inDate": "2023-06-30 02:00:00+00:00",
+   "outDate": "2023-07-14 01:59:59+00:00",
+   "bosses": [
+    "ElusiveMole"
+   ],
+   "stages": 33,
+   "rules": 7,
+   "file": "sa/scoreAttack28.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack27",
+   "id": 145000027,
+   "name": "スコアアタック27",
+   "inDate": "2023-06-16 02:00:00+00:00",
+   "outDate": "2023-06-30 01:59:59+00:00",
+   "bosses": [
+    "RigidSerpent"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack27.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack26",
+   "id": 145000026,
+   "name": "スコアアタック26",
+   "inDate": "2023-06-02 02:00:00+00:00",
+   "outDate": "2023-06-16 01:59:59+00:00",
+   "bosses": [
+    "CannonWalker",
+    "GuardianCrab"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack26.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack25",
+   "id": 145000025,
+   "name": "スコアアタック25",
+   "inDate": "2023-05-19 02:00:00+00:00",
+   "outDate": "2023-06-02 01:59:59+00:00",
+   "bosses": [
+    "手塚"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack25.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack24",
+   "id": 145000024,
+   "name": "スコアアタック24",
+   "inDate": "2023-05-05 02:00:00+00:00",
+   "outDate": "2023-05-19 01:59:59+00:00",
+   "bosses": [
+    "PoisonScooper"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack24.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack23",
+   "id": 145000023,
+   "name": "スコアアタック23",
+   "inDate": "2023-04-21 02:00:00+00:00",
+   "outDate": "2023-05-05 01:59:59+00:00",
+   "bosses": [
+    "DeathSlug"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack23.json",
+   "withActions": 5,
+   "enemyCount": 5
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack22",
+   "id": 145000022,
+   "name": "スコアアタック22",
+   "inDate": "2023-04-07 02:00:00+00:00",
+   "outDate": "2023-04-21 01:59:59+00:00",
+   "bosses": [
+    "RoarKnocker"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack22.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack21",
+   "id": 145000021,
+   "name": "スコアアタック21",
+   "inDate": "2023-03-24 02:00:00+00:00",
+   "outDate": "2023-04-07 01:59:59+00:00",
+   "bosses": [
+    "SolidTail"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack21.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack20",
+   "id": 145000020,
+   "name": "スコアアタック20",
+   "inDate": "2023-03-10 02:00:00+00:00",
+   "outDate": "2023-03-24 01:59:59+00:00",
+   "bosses": [
+    "RigidSerpent"
+   ],
+   "stages": 33,
+   "rules": 8,
+   "file": "sa/scoreAttack20.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack19",
+   "id": 145000019,
+   "name": "スコアアタック19",
+   "inDate": "2023-02-24 02:00:00+00:00",
+   "outDate": "2023-03-10 01:59:59+00:00",
+   "bosses": [
+    "CoffinEye"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack19.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack18",
+   "id": 145000018,
+   "name": "スコアアタック18",
+   "inDate": "2023-02-10 02:00:00+00:00",
+   "outDate": "2023-02-24 01:59:59+00:00",
+   "bosses": [
+    "ArachneBlade"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack18.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack17",
+   "id": 145000017,
+   "name": "スコアアタック17",
+   "inDate": "2023-01-31 02:00:00+00:00",
+   "outDate": "2023-02-09 10:59:59+00:00",
+   "bosses": [
+    "RedCrimson"
+   ],
+   "stages": 33,
+   "rules": 6,
+   "file": "sa/scoreAttack17.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack16",
+   "id": 145000016,
+   "name": "スコアアタック16",
+   "inDate": "2023-01-13 02:00:00+00:00",
+   "outDate": "2023-01-31 01:59:59+00:00",
+   "bosses": [
+    "GriefDoll"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack16.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack15",
+   "id": 145000015,
+   "name": "スコアアタック15",
+   "inDate": "2022-12-30 02:00:00+00:00",
+   "outDate": "2023-01-13 01:59:59+00:00",
+   "bosses": [
+    "FerociousKnocker"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack15.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack14",
+   "id": 145000014,
+   "name": "スコアアタック14",
+   "inDate": "2022-12-16 02:00:00+00:00",
+   "outDate": "2022-12-30 01:59:59+00:00",
+   "bosses": [
+    "YggdVeil"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack14.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack13",
+   "id": 145000013,
+   "name": "スコアアタック13",
+   "inDate": "2022-11-30 02:00:00+00:00",
+   "outDate": "2022-12-16 01:59:59+00:00",
+   "bosses": [
+    "白河 結奈"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack13.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack12",
+   "id": 145000012,
+   "name": "スコアアタック12",
+   "inDate": "2022-11-14 02:00:00+00:00",
+   "outDate": "2022-11-30 01:59:59+00:00",
+   "bosses": [
+    "RotaryMole"
+   ],
+   "stages": 26,
+   "rules": 6,
+   "file": "sa/scoreAttack12.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack11",
+   "id": 145000011,
+   "name": "スコアアタック11",
+   "inDate": "2022-10-31 02:00:00+00:00",
+   "outDate": "2022-11-14 01:59:59+00:00",
+   "bosses": [
+    "GrudgeHorn"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack11.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack10",
+   "id": 145000010,
+   "name": "スコアアタック10",
+   "inDate": "2022-10-14 02:00:00+00:00",
+   "outDate": "2022-10-31 01:59:59+00:00",
+   "bosses": [
+    "SolidTail"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack10.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack9",
+   "id": 145000009,
+   "name": "スコアアタック9",
+   "inDate": "2022-09-30 02:00:00+00:00",
+   "outDate": "2022-10-14 01:59:59+00:00",
+   "bosses": [
+    "IcicleSlug"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack9.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack8",
+   "id": 145000008,
+   "name": "スコアアタック8",
+   "inDate": "2022-09-15 02:00:00+00:00",
+   "outDate": "2022-09-30 01:59:59+00:00",
+   "bosses": [
+    "手塚"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack8.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack7",
+   "id": 145000007,
+   "name": "スコアアタック7",
+   "inDate": "2022-08-31 02:00:00+00:00",
+   "outDate": "2022-09-15 01:59:59+00:00",
+   "bosses": [
+    "CoffinEye"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack7.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack6",
+   "id": 145000006,
+   "name": "スコアアタック6",
+   "inDate": "2022-08-10 02:00:00+00:00",
+   "outDate": "2022-08-31 01:59:59+00:00",
+   "bosses": [
+    "GriefDoll"
+   ],
+   "stages": 13,
+   "rules": 6,
+   "file": "sa/scoreAttack6.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack5",
+   "id": 145000005,
+   "name": "スコアアタック5",
+   "inDate": "2022-07-31 02:00:00+00:00",
+   "outDate": "2022-08-10 01:59:59+00:00",
+   "bosses": [
+    "DeathSlug"
+   ],
+   "stages": 13,
+   "rules": 3,
+   "file": "sa/scoreAttack5.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack4",
+   "id": 145000004,
+   "name": "スコアアタック4",
+   "inDate": "2022-07-06 02:00:00+00:00",
+   "outDate": "2022-07-29 01:59:59+00:00",
+   "bosses": [
+    "YggdVeil"
+   ],
+   "stages": 13,
+   "rules": 12,
+   "file": "sa/scoreAttack4.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack3",
+   "id": 145000003,
+   "name": "スコアアタック3",
+   "inDate": "2022-06-07 02:00:00+00:00",
+   "outDate": "2022-06-30 01:59:59+00:00",
+   "bosses": [
+    "RotaryMole"
+   ],
+   "stages": 26,
+   "rules": 12,
+   "file": "sa/scoreAttack3.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack2",
+   "id": 145000002,
+   "name": "スコアアタック2",
+   "inDate": "2022-05-06 02:00:00+00:00",
+   "outDate": "2022-05-31 01:59:59+00:00",
+   "bosses": [
+    "手塚"
+   ],
+   "stages": 13,
+   "rules": 12,
+   "file": "sa/scoreAttack2.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "scoreAttack",
+   "label": "scoreAttack1",
+   "id": 145000001,
+   "name": "スコアアタック1",
+   "inDate": "2022-04-08 02:00:00+00:00",
+   "outDate": "2022-04-29 01:59:59+00:00",
+   "bosses": [
+    "DeathSlug"
+   ],
+   "stages": 13,
+   "rules": 3,
+   "file": "sa/scoreAttack1.json",
+   "withActions": 4,
+   "enemyCount": 4
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0008",
+   "id": 247000008,
+   "name": "セラフ遭遇戦演習#8",
+   "inDate": "2026-10-30 02:00:00+00:00",
+   "outDate": "2026-11-27 01:59:59+00:00",
+   "bosses": [
+    "[演習機]ObjectionGate",
+    "[演習機]CorollaKnife",
+    "[演習機]GiraffeThunder",
+    "[演習機]ThunderRayHammer",
+    "[演習機]LightningSlug",
+    "[演習機]TriClaw"
+   ],
+   "stages": 5,
+   "rules": 3,
+   "file": "wave/WaveBattle0008.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0007",
+   "id": 247000007,
+   "name": "セラフ遭遇戦演習#7",
+   "inDate": "2026-09-04 02:00:00+00:00",
+   "outDate": "2026-10-09 01:59:59+00:00",
+   "bosses": [
+    "[演習機]DarkBarrelWalker",
+    "[演習機]CowlickPlier",
+    "[演習機]DesertDendron",
+    "[演習機]RectusNilP",
+    "[演習機]SinisterNilP",
+    "[演習機]RigidSerpent"
+   ],
+   "stages": 5,
+   "rules": 3,
+   "file": "wave/WaveBattle0007.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0006",
+   "id": 247000006,
+   "name": "セラフ遭遇戦演習#6",
+   "inDate": "2026-07-03 02:00:00+00:00",
+   "outDate": "2026-07-31 01:59:59+00:00",
+   "bosses": [
+    "[演習機]OozeGate",
+    "[演習機]TyrantWhip",
+    "[演習機]WireFrameγ",
+    "[演習機]SignalVeil"
+   ],
+   "stages": 4,
+   "rules": 3,
+   "file": "wave/WaveBattle0006.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0005",
+   "id": 247000005,
+   "name": "セラフ遭遇戦演習#5",
+   "inDate": "2026-05-08 02:00:00+00:00",
+   "outDate": "2026-06-05 01:59:59+00:00",
+   "bosses": [
+    "[演習機]VagueKnocker",
+    "[演習機]SnareScooper",
+    "[演習機]LurkFeeler",
+    "[演習機]OctopusTailβ",
+    "[演習機]TemptingCrow"
+   ],
+   "stages": 5,
+   "rules": 3,
+   "file": "wave/WaveBattle0005.json",
+   "withActions": 6,
+   "enemyCount": 6
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0004",
+   "id": 247000004,
+   "name": "セラフ遭遇戦演習#4",
+   "inDate": "2026-03-13 02:00:00+00:00",
+   "outDate": "2026-04-10 01:59:59+00:00",
+   "bosses": [
+    "[演習機]CorollaKnife",
+    "[演習機]ExoWatcher",
+    "[演習機]FurnaceEye",
+    "[演習機]GiraffeHalo",
+    "[演習機]PileGolem",
+    "[演習機]HeftyGuardian"
+   ],
+   "stages": 5,
+   "rules": 3,
+   "file": "wave/WaveBattle0004.json",
+   "withActions": 8,
+   "enemyCount": 8
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0003",
+   "id": 247000003,
+   "name": "セラフ遭遇戦演習#3",
+   "inDate": "2025-12-12 02:00:00+00:00",
+   "outDate": "2026-01-16 01:59:59+00:00",
+   "bosses": [
+    "[演習機III]DeadLockWalker",
+    "[演習機III]MadShockWalker",
+    "[演習機III]CorollaKnife",
+    "[演習機III]CrowHorse",
+    "[演習機III]CurseDoll",
+    "[演習機III]SwellCrow",
+    "[演習機III]TallFlesia"
+   ],
+   "stages": 5,
+   "rules": 3,
+   "file": "wave/WaveBattle0003.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0002",
+   "id": 247000002,
+   "name": "第二回セラフ遭遇戦",
+   "inDate": "2025-04-18 02:00:00+00:00",
+   "outDate": "2025-05-16 01:59:59+00:00",
+   "bosses": [
+    "[演習機II]DeathHopper",
+    "[演習機II]RectusNil",
+    "[演習機II]SinisterNil",
+    "[演習機II]GiraffeHalo",
+    "[演習機II]RabbitChopper",
+    "[演習機II]RayHammer",
+    "[演習機II]VeiledDeath"
+   ],
+   "stages": 5,
+   "rules": 0,
+   "file": "wave/WaveBattle0002.json",
+   "withActions": 10,
+   "enemyCount": 10
+  },
+  {
+   "kind": "wave",
+   "label": "WaveBattle0001",
+   "id": 247000001,
+   "name": "第一回セラフ遭遇戦",
+   "inDate": "2024-11-08 02:00:00+00:00",
+   "outDate": "2024-12-06 01:59:59+00:00",
+   "bosses": [
+    "[演習機I]BulbFlea",
+    "[演習機I]BarrelWalker",
+    "[演習機I]KillerHopper",
+    "[演習機I]Feeler",
+    "[演習機I]MolArmsα",
+    "[演習機I]NeedleBirdS"
+   ],
+   "stages": 5,
+   "rules": 0,
+   "file": "wave/WaveBattle0001.json",
+   "withActions": 8,
+   "enemyCount": 8
+  }
+ ]
+}

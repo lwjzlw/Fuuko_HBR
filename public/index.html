@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="wb-token" content="{{WB_TOKEN}}">
+<title>HBR 研究室</title>
+<link rel="icon" href="/hbr-icon.png">
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/_shared/fuuko.css">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/catalog.css">
+</head>
+<body>
+<div class="hbr-app">
+  <header class="hbr-top">
+    <a class="hbr-brand" href="#box" aria-label="HBR 研究室">
+      <img src="/hbr-icon.png" alt="" width="30" height="30">
+      <b>HBR 研究室</b>
+    </a>
+    <nav class="hbr-tabs" aria-label="主导航">
+      <button type="button" data-tab="box" class="active">Box <b id="roster-count" class="count">0</b></button>
+      <button type="button" data-tab="planner">排轴器</button>
+      <button type="button" data-tab="boss">Boss 资料</button>
+    </nav>
+    <div class="header-actions">
+      <button id="save-status" class="save-status" type="button" title="档案保存状态；保存失败时点这里重试">读取中…</button>
+      <button id="cache-sync" class="primary" type="button" title="只读本机游戏缓存，更新拥有、突破、等级等记录">从游戏同步</button>
+      <div class="more">
+        <button id="more-toggle" class="quiet icon-only" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" title="更多">⋯</button>
+        <div id="more-menu" class="more-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="import-open">导入备份…</button>
+          <button type="button" role="menuitem" id="export">导出备份</button>
+          <button type="button" role="menuitem" id="open-data">打开数据目录</button>
+          <hr>
+          <button type="button" role="menuitem" id="theme-toggle">切换浅色／深色</button>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main class="hbr-main">
+    <div id="notice" class="notice-bar" role="status" aria-live="polite" hidden><span></span><button type="button" aria-label="关闭提示">×</button></div>
+    <section id="content"><p class="subtle">正在加载角色和卡面目录…</p></section>
+    <footer>
+      <span>HBR 个人研究工具 · 非官方 · v0.11.0</span>
+      <a href="https://hbr.quest/" target="_blank" rel="noreferrer">数据来源 hbr.quest ↗</a>
+    </footer>
+  </main>
+</div>
+<dialog id="editor"><div id="dialog-content"></div></dialog>
+<input id="import-file" type="file" accept="application/json,.json" hidden>
+<script type="module" src="/app.mjs"></script>
+</body>
+</html>
