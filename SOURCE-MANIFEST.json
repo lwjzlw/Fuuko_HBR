@@ -19,8 +19,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 6694,
-      "sha256": "4d5126838cde2ff3923ecf8ca8b5359c3ca04d054df52c18c8d8e43b965ef97b"
+      "bytes": 7462,
+      "sha256": "dac6b852a709fab151be1b383032beda589b2a2e14e0f8f92d9a8d7b6be1dd09"
     },
     {
       "path": "Update-Catalog.ps1",
@@ -819,13 +819,13 @@
     },
     {
       "path": "public/planner-results.mjs",
-      "bytes": 2321,
-      "sha256": "1b760b0015a55b3f9a1cdcfa3d4cc1598a6c268100f3796cf6c679202da72787"
+      "bytes": 5429,
+      "sha256": "87b65b0b4412a06c7e247988a258fdcf5e9cbaabad5afc3642bcf31a5c0755b1"
     },
     {
       "path": "public/planner-ui.mjs",
-      "bytes": 58523,
-      "sha256": "588a4647f00704ddca41bb16bbd91f68b0483e47b06f22dbe06db7577362e409"
+      "bytes": 59695,
+      "sha256": "25eb75ce6e93947a77289455c980fd53804fbaebaadb073c87f9de0cf89e4110"
     },
     {
       "path": "public/progress.mjs",
@@ -839,8 +839,8 @@
     },
     {
       "path": "public/sim/designer.mjs",
-      "bytes": 13402,
-      "sha256": "fac303bc6206047f9d922218120cd9942efb71ae37af7924857f667ab28e3006"
+      "bytes": 14318,
+      "sha256": "33bbcf9e7d47f5955b95547218d39c61966099c5d65c037009d4270032e8f8a0"
     },
     {
       "path": "public/sim/expr.mjs",
@@ -884,8 +884,8 @@
     },
     {
       "path": "public/sim/optimizer-options.mjs",
-      "bytes": 2222,
-      "sha256": "2dbf3e7d00848e9eab35628f41622494a2ec43f3f746801bb3d7967b47912c0e"
+      "bytes": 3159,
+      "sha256": "08f6473d2a82560cd8dd3dc6a752b89452abd895ea23e2ce0e8cc392728836f9"
     },
     {
       "path": "public/sim/optimizer-sub.mjs",
@@ -899,8 +899,8 @@
     },
     {
       "path": "public/sim/optimizer.mjs",
-      "bytes": 40531,
-      "sha256": "369f15fe9c61f41086dc265f096bebbd4cf148d7c954c4765989fd8ae3b9cd15"
+      "bytes": 47096,
+      "sha256": "22a1ef330e9a3f896a9bc1e837706e8b3ecfc74bbe21a77527e23eaa6e7bcdd2"
     },
     {
       "path": "public/sim/party.mjs",
@@ -984,8 +984,8 @@
     },
     {
       "path": "scripts/package_release.py",
-      "bytes": 7941,
-      "sha256": "30ddb5e700c4af7db52d5f105cdaa4f809502f9b52044408d94633961befc9a8"
+      "bytes": 7997,
+      "sha256": "eefe154eb16e1ed4f1f165c62ff707546904ae3be74fb3ab9f536f1bac65404f"
     },
     {
       "path": "scripts/release_support.py",
@@ -1048,9 +1048,19 @@
       "sha256": "6c5ff36489fa7b5bb8947c30d4ccbf0f13479437f4c9497b2a9912210a3cfdac"
     },
     {
+      "path": "tests/monte-carlo.test.mjs",
+      "bytes": 3907,
+      "sha256": "e65404a559962feb874ab6f8321e2ba4986956db27c9bc8075b186261de590fc"
+    },
+    {
+      "path": "tests/optimizer-stability.test.mjs",
+      "bytes": 7763,
+      "sha256": "cde46d22f9707d545d5a7312ec7c048e96ad55bfe1f2b8d08ac1d5f8e979950f"
+    },
+    {
       "path": "tests/optimizer.test.mjs",
-      "bytes": 8999,
-      "sha256": "1dbf59dc09ed3acde638b3f7d9d97e74b30449685fcccef8c24fa532d1786e8a"
+      "bytes": 9161,
+      "sha256": "aae5ff7492f08fdd997e60cda6d48d5eb6e0083f1bcd8e3bd4b3b96fc39775c7"
     },
     {
       "path": "tests/planner-display.test.mjs",
@@ -1059,8 +1069,8 @@
     },
     {
       "path": "tests/planner-results.test.mjs",
-      "bytes": 2271,
-      "sha256": "a8f3f0659dca0eeb274e0b904eb581a159cac58957c182db1b9add39af0499d8"
+      "bytes": 5398,
+      "sha256": "2e24c8e099bc6df31be7d368d3fb14c81c0a5fc85f06f24081f25366a8aec375"
     },
     {
       "path": "tests/planner.test.mjs",

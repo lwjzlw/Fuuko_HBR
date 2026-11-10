@@ -3,7 +3,7 @@
 //   1. 种子：当前队伍、游戏里的 6 人编队、同角色换卡面；再按权重随机组若干支全新队伍（不看职能）。
 //   2. 评估：粗筛（全部技能可用、按阶段串联搜索，SP/OD/DP 跨阶段继承）；不差于精英末位的再补完——
 //      按“技能格上限”挑技能（保留实际用到的、余格补通用被动）后重排。
-//   3. 进化搜索（按时间预算）：从精英队伍出发，按模拟里的实际贡献挑最闲的人换掉 / 换两人 / 与另一支精英交叉 / 换耳环；
+//   3. 进化搜索（固定评估预算、确定性批次）：从精英队伍出发，按模拟里的实际贡献挑最闲的人换掉 / 换两人 / 与另一支精英交叉 / 换耳环；
 //      卡面抽取权重 = 先验（属性契合、养成）×（1 + 在精英队伍里出现的频率），停滞时注入随机新队。
 //   4. 入围队伍逐阶段贪心挑战术卡（每个阶段试全部可能有用的卡），再用更宽的搜索重排。
 //   5. 蒙特卡洛：旧轴/宽束/挑卡轴用共同随机种子复排，保留最多 20 个不同方案；另给无卡成功率。
@@ -14,7 +14,7 @@ import {search,replay} from './search.mjs';
 import {simulateDesign,designFromPlan,monteCarlo,emptyTurn,mulberry32} from './designer.mjs';
 import {applyCard,relevantCards,cardById} from './cards.mjs';
 import {waveScore,waveRoundScore} from '../boss-model.mjs';
-import {normalizeTeamElement,resultLimit,rawIdentity,candidateIdentity,attackElements,elementSummary} from './optimizer-options.mjs';
+import {normalizeTeamElement,resultLimit,rawIdentity,candidateIdentity,attackElements,elementSummary,searchBudget} from './optimizer-options.mjs';
 
 const lc=x=>String(x||'').toLowerCase();
 const EAR_LABEL={attacking:'进攻耳環',breaking:'BREAK耳環',drive:'DRIVE耳環',devastating:'破坏率耳環'};
@@ -51,7 +51,8 @@ function inventoryBest(inv,byId){
  *          target:{kind, ev, rules, phases:[{enemies}], cards:[每阶段卡|null], difficulty, international},
  *          ruleOptions:[{ids,rules,phases}]（可选：要搜索的规则组合，每项带该规则下构建的阶段敌人）, ruleIndex（当前所选规则在其中的位置）},
  *          opts:{goal:'score'|'stable'|'fast', teamElement:''|'ice'|'fire'|'thunder'|'light'|'dark'|'nonelemental',
- *                beam, screenBeam, maxTurns, mcRuns, searchMs, randomSeeds, top:1..20, optimizeCards, broad, fixedTeam, allOrbs, threads}}
+ *                beam, screenBeam, maxTurns, mcRuns, searchEvals, searchBatch, randomSeeds, top:1..20, optimizeCards, broad, fixedTeam, allOrbs, threads},
+ *          incumbents:[{members,design,ruleIds,label}]（同任务的旧轴，重新模拟，不复用旧评分）}
  */
 export async function optimize(input,onProgress=()=>{},runner=null){
   const S=setup(input,onProgress);
@@ -75,11 +76,11 @@ function setup(input,onProgress=()=>{}){
   const phases=target.phases.map(p=>p.enemies);
   const nPhases=phases.length;
   // 规则组合：每个候选带一个规则编号（party._ri），模拟用该规则下的敌人、计分用该规则的倍率
-  const ruleOpts=(target.ruleOptions?.length?target.ruleOptions:[{ids:null,rules:target.rules||[],phases:target.phases}])
+  const ruleOpts=(target.ruleOptions?.length?target.ruleOptions:[{ids:(target.rules||[]).map(r=>r.id),rules:target.rules||[],phases:target.phases}])
     .map(o=>({...o,enemies:o.phases.map(p=>p.enemies),names:(o.rules||[]).map(r=>r.name)}));
   const ruleBase=Math.min(ruleOpts.length-1,Math.max(0,target.ruleIndex||0));
   const RO=party=>ruleOpts[party?._ri??ruleBase]||ruleOpts[0];
-  // 目标：score = 期望总分最高（遭遇战）；stable = 成功率优先；fast = 回合最少
+  // 目标：score = 通关样本均分最高（遭遇战）；stable = 成功率优先；fast = 回合最少
   const goal=opts.goal||(isWave?'score':'stable');
   const teamElement=normalizeTeamElement(opts.teamElement),topLimit=resultLimit(opts.top);
   const userCards=(target.cards||[]).some(Boolean)?target.cards:null;
@@ -112,6 +113,55 @@ function setup(input,onProgress=()=>{}){
   const baseRaws=base.map(m=>m.raw).filter(Boolean);
   const baseOk=baseRaws.length===6;
   const baseFront=base.map(m=>!!m.front);
+  const sameRules=(a,b)=>JSON.stringify([...(a||[])].map(String).sort())===JSON.stringify([...(b||[])].map(String).sort());
+  const incumbentRule=x=>x.ruleIds==null?ruleBase:ruleOpts.findIndex(r=>sameRules(r.ids,x.ruleIds));
+  const ownedStyles=new Set([...(cache.cards||[]).map(c=>c.styleId),...base.map(m=>m.styleId),
+    ...decks.flatMap(d=>d.members.map(m=>m.styleId)),...Object.keys(archive?.styles||{}).filter(id=>archive.styles[id].owned)]);
+  /** 旧结果只提供配置与轴；重新派生面板/饰品/支援效果并验证本次的约束，不能作为绕过入口。 */
+  function normalizeIncumbent(x){
+    if(x?.members?.length!==6||x.design?.phases?.length!==nPhases||incumbentRule(x)<0)return null;
+    if(!valid(x.members.map(m=>m.raw))||x.members.some(m=>m.styleId!==m.raw.styleId||!ownedStyles.has(m.styleId)))return null;
+    if(opts.fixedTeam&&x.members.some((m,i)=>m.styleId!==base[i]?.styleId))return null;
+    if(x.members.filter(m=>m.front).length!==3)return null;
+    const cards=x.design.phases.map(p=>p.card||null);
+    if(cards[0]||cards.some(c=>c&&!cardById(c))||new Set(cards.filter(Boolean)).size!==cards.filter(Boolean).length)return null;
+    if(opts.optimizeCards===false&&cards.some((c,p)=>c!==(p>0?target.cards?.[p]||null:null)))return null;
+    const raws=x.members.map(m=>structuredClone(m.raw));
+    if(raws.some(r=>r.supportStyleId&&!ownedStyles.has(r.supportStyleId)))return null;
+    const ms=membersFromDeck({index:-1,name:'',members:raws},{catalog,equipment,stats,previous:x.members});
+    const declared=x.members.map(m=>m.deckSkillIds?.length?m.deckSkillIds:m.raw.skillIds||[]);
+    for(let i=0;i<ms.length;i++){
+      const ids=declared[i],raw=raws[i],cap=skillSlotCap(raw,roleOf(raw.styleId));
+      if(!Array.isArray(ids)||ids.some(id=>!Number.isInteger(id))||new Set(ids).size!==ids.length||ids.length>cap)return null;
+      const character=catalog.characters.find(c=>c.id===styleById.get(raw.styleId)?.characterId);
+      const available=new Set((character?.styleIds||[]).filter(id=>ownedStyles.has(id)).flatMap(id=>(skills.styles[id]?.skills||[]).map(s=>s.id)));
+      for(const id of ids){
+        if(stats?.extraSkills?.[String(id)]){
+          if(!(raw.skillIds||[]).includes(id)&&!(opts.allOrbs!==false&&isOrbSkillId(id)))return null;
+        }else if(!available.has(id)&&!(raw.skillIds||[]).includes(id))return null;
+      }
+      ms[i].front=!!x.members[i].front;ms[i].deckSkillIds=ids.slice();ms[i].allOrbSkills=false;
+    }
+    const converted=membersFrom({members:ms},archive,catalog);if(!converted.ready)return null;
+    const party=buildParty(converted.members,{skills,catalog,stats});
+    const used=ms.map(()=>new Set());
+    for(const p of x.design.phases)for(const t of p.turns||[]){
+      const rounds=[t,...(t.odStart?.rounds||[]),...(t.odEnd?.rounds||[])];
+      for(const r of rounds)for(const a of [...(r.actions||[]),...(r.extra||[])]){
+        if(!a.s||a.s==='normal')continue;
+        const sk=party[a.u]?.skills.find(s=>s.label===a.s);if(!sk)return null;
+        if(sk.id>0&&!/CommandBuff$/.test(sk.label||''))used[a.u].add(sk.id);
+      }
+    }
+    for(let i=0;i<ms.length;i++)if(!declared[i].length){
+      // 手排未指定技能列表时，从实际动作补齐配置；本卡被动也占据技能格。
+      const ids=new Set([...used[i],...party[i].skills.filter(s=>s.ownStyle&&s.passive&&s.id>0).map(s=>s.id)]);
+      if(ids.size>skillSlotCap(raws[i],party[i].role))return null;
+      ms[i].deckSkillIds=[...ids];
+    }
+    return {...x,members:ms,design:structuredClone(x.design)};
+  }
+  const incumbentInputs=(input.incumbents||[]).slice(0,21).map(normalizeIncumbent).filter(Boolean);
   // 新成员用的“位置模板”（饰品其余槽、支援卡、宝珠沿用这个位置的）
   const tplRaws=baseOk?baseRaws:(decks.find(d=>d.current)||decks[0])?.members||[];
   /** 换卡沿用该位置的耳环/其余槽/支援/宝珠；戒指按属性挑选，潜在清空（角色专属）。 */
@@ -127,6 +177,7 @@ function setup(input,onProgress=()=>{}){
   };
 
   if(baseOk)add('当前队伍',baseRaws,baseFront,'base');
+  for(const x of incumbentInputs)add(x.label||'已有高分方案',x.members.map(m=>m.raw),x.members.map(m=>!!m.front),'incumbent',incumbentRule(x));
   for(const d of decks)add(`编队 ${d.index}「${d.name}」`,d.members,null,'deck');
   if(baseOk){
     baseRaws.forEach((r,i)=>{
@@ -161,7 +212,7 @@ function setup(input,onProgress=()=>{}){
     x.elite=0;
   }
   pool.sort((a,b)=>b.prior-a.prior);
-  const rng=mulberry32(opts.seed||97);
+  const rng=mulberry32(opts.seed??97);
   const weightOf=x=>Math.max(0.05,x.prior)*(1+3*x.elite);
   const wpick=(list,w)=>{let tot=0;for(const x of list)tot+=w(x);let r=rng()*tot;for(const x of list){r-=w(x);if(r<=0)return x;}return list.at(-1)||null;};
   const isAdm=styleId=>roleOf(styleId)==='Admiral';
@@ -188,7 +239,7 @@ function setup(input,onProgress=()=>{}){
   const addRandom=el=>{const raws=sampleTeam(el);if(!raws)return null;randomNo++;
     const c=add(`全新队伍 #${randomNo}（${el?el+' 偏向':'不限属性'}起点）`,raws,null,'random',ruleOpts.length>1&&opts.searchRules!==false?Math.floor(rng()*ruleOpts.length):ruleBase);if(c){c.root=c.label;c.rootRaws=raws;c.island=true;}return c;};
   // 固定配队：只评估当前队伍（各规则组合），不换人、不组新队、不做进化搜索
-  if(opts.fixedTeam)for(let i=cands.length-1;i>=0;i--)if(cands[i].origin!=='base')cands.splice(i,1);
+  if(opts.fixedTeam)for(let i=cands.length-1;i>=0;i--)if(!['base','incumbent'].includes(cands[i].origin))cands.splice(i,1);
   const broad=opts.broad!==false&&!opts.fixedTeam;
   if(broad){
     const seedsN=opts.randomSeeds??8;
@@ -217,8 +268,8 @@ function setup(input,onProgress=()=>{}){
   // 目标“最高分”（遭遇战）：每阶段搜索权衡“多打一回合”的伤害分增量与回合分损失（turnCost = 总回合从 N 到 N+1 的回合分差，N = 阶段数）
   const diff=target.difficulty||40,intl=target.international!==false;
   const turnCost=waveRoundScore(nPhases,diff,intl)-waveRoundScore(nPhases+1,diff,intl);
-  // 粗筛（quick）一律用“最少回合 + 溢出伤害加分”（快约一倍）；补完与入围才按目标搜索
-  const so=(b,quick=false)=>({objective:goal==='score'&&isWave&&!quick?'waveScore':'minTurns',turnCost,extraTurns:1,maxTurns:opts.maxTurns||6,beam:b,critMode:'expected',allowOd:true,odWindows:['turnStart','turnEnd'],damageNorm:1e6,overkill,teamElement,top:1,trace:false});
+  // 最快路线的分数不是高分路线的上界；高分目标从粗筛起就搜索分数，避免误删蓄力路线。
+  const so=(b,quick=false)=>({objective:goal==='score'&&isWave?'waveScore':'minTurns',turnCost,extraTurns:opts.extraTurns??2,maxTurns:opts.maxTurns||6,beam:b,critMode:'expected',allowOd:true,odWindows:['turnStart','turnEnd'],damageNorm:1e6,overkill,teamElement,top:1,trace:false});
   const scoreOf=(res,party)=>isWave?waveScore({damages:res.phases.map(x=>overkill?x.shown??x.damage:x.damage),turns:res.turns,difficulty:diff,rules:RO(party).rules||[],international:intl}).total:null;
 
   /** 从第 p0 阶段（该阶段选卡前的状态 st0）起串联搜索到最后。返回各阶段计划与选卡前状态。 */
@@ -242,11 +293,14 @@ function setup(input,onProgress=()=>{}){
     return {plans,states};
   }
   /** 计划 → 设计 → 重放（期望暴击），给出排名键。 */
-  /** mcN > 0：再跑 mcN 次随机模拟（同一种子，便于比较），排名用期望分（最高分）/ 成功率（最稳），而不是期望暴击下的单次计划分。 */
-  const MCJ=opts.mcJudge??8;
+  /** 稳定目标用少量共同随机样本辅助粗评；高分目标保留计划分排序，入围后再比较通关样本均分。 */
+  const MCJ=opts.mcJudge??3;
   function judge(party,cards,plans,mcN=0){
     const design={phases:Array.from({length:nPhases},(_,p)=>({card:p>0?cards[p]||null:null,
       turns:plans[p]?designFromPlan(plans[p].plan,party).phases[0].turns:[emptyTurn()]}))};
+    return judgeDesign(party,design,mcN);
+  }
+  function judgeDesign(party,design,mcN=0){
     const sctx={party,phases:RO(party).phases,statusTypes:skills.statusTypes};
     const res=simulateDesign(sctx,{critMode:'expected'},design);
     const cleared=res.phases.filter(x=>x.cleared).length;
@@ -256,9 +310,10 @@ function setup(input,onProgress=()=>{}){
     // 稳健性：同一份排轴全不暴击时能否照样打完（不顺延回合）
     const nc=simulateDesign(sctx,{critMode:'none'},design);
     const robust=nc.phases.filter(x=>x.cleared).length+(nc.failed||nc.issues.some(x=>x.level==='error')?0:0.5);
-    const mc=mcN>0&&goal!=='fast'?monteCarlo(sctx,{},design,{n:mcN,seed:11,scoreOf:isWave?r=>scoreOf(r,party):null}):null;
-    // 粗筛没有模拟：期望分用计划分（偏乐观）、成功率按 1 计——粗筛结果只要不差于精英末位就补完，乐观估计不会漏掉好方案
-    const expScore=mc&&isWave?Math.round(mc.scoreMean):score||0,expOk=mc?mc.success:1;
+    // 高分候选探索看确定性计划分，3次偶发失败不能在粗筛阶段淘汰一条高分轴。
+    const mc=mcN>0&&goal==='stable'?monteCarlo(sctx,{},design,{n:mcN,seed:11,scoreOf:isWave?r=>scoreOf(r,party):null}):null;
+    // 未做粗评 MC 时用计划分，成功率暂按 1 计；这是搜索启发式，不是全局最优保证。
+    const expScore=mc&&isWave?(Number.isFinite(mc.scoreMean)?Math.round(mc.scoreMean):-Infinity):score||0,expOk=mc?mc.success:1;
     const element=elementSummary(res.elementDamage,teamElement);
     const key=goal==='stable'?[cleared,res.failed||invalid?0:1,expOk,robust,isWave?expScore:-res.turns,-res.turns,damage]
         :goal==='fast'?[cleared,res.failed||invalid?0:1,-res.turns,robust,isWave?score||0:0,damage]
@@ -328,13 +383,16 @@ function setup(input,onProgress=()=>{}){
   }
   const safe=(f,label)=>{try{return f();}catch(err){errors.push({label,error:err.message});return null;}};
   const errors=[];
-  const screenCards=userCards||DEFAULT_CARDS.slice(0,nPhases);
+  const screenCards=userCards||(opts.optimizeCards===false?Array(nPhases).fill(null):DEFAULT_CARDS.slice(0,nPhases));
   const screenBeam=opts.screenBeam||Math.min(4,opts.beam||6);
-  const sortRes=list=>list.sort((a,b)=>better(a,b)?-1:better(b,a)?1:0);
+  const rankIds=new WeakMap();
+  const rankId=x=>{if(!rankIds.has(x))rankIds.set(x,candidateIdentity(x.raws||x.members.map(m=>m.raw),x.front||x.members?.map(m=>m.front),x.rule)+'|'+JSON.stringify(x.design||{}));return rankIds.get(x);};
+  const tie=(a,b)=>{const x=rankId(a),y=rankId(b);return x<y?-1:x>y?1:0;};
+  const sortRes=list=>list.sort((a,b)=>better(a,b)?-1:better(b,a)?1:tie(a,b));
   const teamKey=r=>r.raws.map(x=>x.styleId).sort().join('|');
   const results=[];   // 完整评估过的
   let screened=0,promoted=0;
-  const ELITE=Math.max(opts.elite||8,topLimit);
+  const ELITE=Math.max(opts.elite||24,topLimit);
   let elites=[];
   const refreshElites=()=>{
     sortRes(results);elites=[];const seenT=new Set();
@@ -368,6 +426,7 @@ function setup(input,onProgress=()=>{}){
         else{const f=safe(()=>finish(s,screenCards,screenBeam),c.label);out=light(f||s);}
       }
     }else if(task.type==='final')out=safe(()=>finalize(task.f,task.fi),task.f.label);
+    else if(task.type==='incumbent')out=safe(()=>rateIncumbent(task.incumbent),task.incumbent.label||'已有方案');
     return {r:out,errors:errors.splice(e0)};
   }
 
@@ -414,7 +473,7 @@ function setup(input,onProgress=()=>{}){
       const improved=full&&better(full,picked)?full:picked;
       if(better(improved,f))cur={...f,...improved};
     }
-    const mcRuns=opts.mcRuns||60;
+    const mcRuns=opts.mcRuns||32;
     const seenDesign=new Set();
     const rated=variants.filter(v=>{
       const k=JSON.stringify(v.design);if(seenDesign.has(k)||!v.elementMatch||v.invalid)return false;seenDesign.add(k);return true;
@@ -427,7 +486,7 @@ function setup(input,onProgress=()=>{}){
     if(isWave&&cards.some(Boolean)){
       const none=cards.map(()=>null);
       const j=safe(()=>judge(party,none,chain(party,none,screenBeam).plans),f.label);
-      if(j)mcNoCards={...monteCarlo(j.sctx,{},j.design,{n:Math.max(20,Math.round(mcRuns/2)),seed:70,scoreOf:res=>scoreOf(res,party)}),turns:j.turns,score:j.score};
+      if(j)mcNoCards={...monteCarlo(j.sctx,{},j.design,{n:Math.max(8,Math.round(mcRuns/2)),seed:70,scoreOf:res=>scoreOf(res,party)}),turns:j.turns,score:j.score};
     }
     // 装备说明（相对原卡面所在位置）
     const loadout=cur.raws.map((r,i)=>{
@@ -445,36 +504,55 @@ function setup(input,onProgress=()=>{}){
     const output=rated.map(publicResult);return {...output[0],alternatives:output.slice(1)};
   }
 
-  const mean=t=>t.mc.scoreMean??0;
-  function compareFinal(a,b){return goal==='stable'?(b.mc.success-a.mc.success)||(isWave?mean(b)-mean(a):a.turns-b.turns)
+  function rateIncumbent(x){
+    x=normalizeIncumbent(x);if(!x)return null;
+    const ms=structuredClone(x.members),{members,ready}=membersFrom({members:ms},archive,catalog);
+    if(!ready)return null;
+    const party=buildParty(members,{skills,catalog,stats});party._ri=incumbentRule(x);
+    const j=judgeDesign(party,structuredClone(x.design));
+    if(j.invalid||!j.elementMatch)return null;
+    const mc=monteCarlo(j.sctx,{},j.design,{n:opts.mcRuns||32,seed:7,scoreOf:isWave?res=>scoreOf(res,party):null});
+    const ro=RO(party);
+    return {label:x.label||'已有方案（重新评估）',origin:'incumbent',newTeam:false,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,
+      cleared:j.cleared,phases:nPhases,failed:j.failed,turns:j.turns,score:j.cleared===nPhases&&!j.failed?j.score:null,damage:Math.round(j.damage),robust:j.robust,
+      teamElement:j.teamElement,elementDamage:j.elementDamage,elementShare:j.elementShare,mc,mcNoCards:null,design:j.design,cards:j.design.phases.map(p=>p.card||null),cardRank:[],
+      loadout:party.map((u,i)=>({name:`${u.name}〈${u.styleName}〉`,front:!!ms[i].front,isNew:false,cap:skillSlotCap(ms[i].raw,u.role),skills:u.skills.filter(s=>!s.passive).map(s=>s.name||s.label),changes:[],skillsChanged:false})),
+      members:ms,team:party.map(u=>`${u.name}〈${u.styleName}〉`)};
+  }
+
+  const mean=t=>Number.isFinite(t.mc.scoreMean)?t.mc.scoreMean:-Infinity;
+  function compareFinal(a,b){return (goal==='stable'?(b.mc.success-a.mc.success)||(isWave?mean(b)-mean(a):a.turns-b.turns)
     :goal==='fast'?((a.mc.turnsMedian??99)-(b.mc.turnsMedian??99))||(b.mc.success-a.mc.success)||(mean(b)-mean(a))
-    :isWave?(mean(b)-mean(a))||(b.mc.success-a.mc.success):(b.mc.success-a.mc.success)||(a.turns-b.turns);}
+    :isWave?(mean(b)-mean(a))||(b.mc.success-a.mc.success):(b.mc.success-a.mc.success)||(a.turns-b.turns))||tie(a,b);}
 
   // ================================================================ 协调者
   async function coordinate(runner){
   const lanes=Math.max(1,runner.size||1);
-  /** 提交一个候选去评估；回来后更新精英 / 新队伍岛。 */
-  const submit=c=>{
+  const budget=searchBudget(opts);
+  /** 同一批次使用同一筛选门槛，结果按提交顺序归并，完成先后不影响后续采样。 */
+  const submitBatch=async list=>{
     const worst=elites.length>=ELITE?elites[ELITE-1].key:null;
-    const task={type:'eval',cand:{label:c.label,raws:c.raws,front:c.front,origin:c.origin,rule:c.rule,root:c.root,rootRaws:c.rootRaws,island:!!c.island,kind:c.kind},worst};
-    return runner.run(task).then(m=>{
+    const settled=await Promise.all(list.map(c=>{
+      const task={type:'eval',cand:{label:c.label,raws:c.raws,front:c.front,origin:c.origin,rule:c.rule,root:c.root,rootRaws:c.rootRaws,island:!!c.island,kind:c.kind},worst};
+      return runner.run(task).catch(err=>({errors:[{label:c.label,error:String(err?.message||err)}]}));
+    }));
+    for(const m of settled){
       errors.push(...(m?.errors||[]));
-      const r=m?.r;if(!r)return null;
+      const r=m?.r;if(!r)continue;
       screened++;
-      if(!r.screenOnly){promoted++;results.push(r);refreshElites();}
-      pushIsland(r);return r;
-    },err=>{errors.push({label:c.label,error:String(err?.message||err)});return null;});
+      if(!r.screenOnly){promoted++;results.push(r);}
+      pushIsland(r);
+    }
+    refreshElites();
   };
-  // 种子：并行评估
-  {let i=0,done=0;const list=cands.slice();
-    await Promise.all(Array.from({length:lanes},async()=>{while(i<list.length){const c=list[i++];await submit(c);progress('evaluate',done++,list.length,c.label);}}));}
+  // 种子也按固定批次归并；批大小独立于硬件并发数。
+  {const list=cands.slice();
+    for(let i=0;i<list.length;i+=budget.batch){const batch=list.slice(i,i+budget.batch);await submitBatch(batch);progress('evaluate',i+batch.length,list.length,batch.at(-1).label);}}
 
   // ---------------------------------------------------------------- 进化搜索（不按职能配队）
   // 变异：按实际贡献挑最闲的位置换人（主）、一次换两人、与另一支精英队交叉、换耳环；
-  // 长时间没有进步就注入一支随机新队。时间预算到点或次数到上限即停。
-  const searchMs=broad?(opts.searchMs??90000):0;
-  const maxIter=opts.searchEvals??Infinity;
-  const tS=Date.now();
+  // 多次没有进步就注入一支随机新队。按完成的候选数结束，机器负载不改变搜索覆盖。
+  const maxIter=broad?budget.evaluations:0;
   const labelOf=(root,rootRaws,raws,isl)=>{
     if(isl)return root.replace(/（.*）$/,''); // 全新队伍：起点只是随机种子，阵容看成员列表
     const before=new Set(rootRaws.map(r=>r.styleId)),after=new Set(raws.map(r=>r.styleId));
@@ -530,45 +608,48 @@ function setup(input,onProgress=()=>{}){
   }
   let iter=0,stale=0,miss=0;
   const restartAfter=opts.restartAfter||10;
-  // 多条并行“车道”：每条取一个父本变异、提交评估、等结果；精英与岛随结果实时更新（异步稳态进化）
-  await Promise.all(Array.from({length:lanes},async()=>{
-    while(searchMs>0&&elites.length&&iter<maxIter&&Date.now()-tS<searchMs&&miss<200){
-      const top=elites[0];
+  // 先冻结父本池生成整批，再并行计算、依次归并；随机数消耗顺序不依赖回包顺序。
+  while(elites.length&&iter<maxIter&&miss<200){
+    const top=elites[0],batch=[];
+    while(batch.length<Math.min(budget.batch,maxIter-iter)&&miss<200){
       const c=stale>=restartAfter?(stale=0,addRandom(teamElement||goodEls[Math.floor(rng()*Math.max(1,goodEls.length))]||null)):mutate(pickParent());
       if(!c){miss++;continue;}
-      miss=0;iter++;
-      progress('evolve',Math.min(searchMs,Date.now()-tS)/1000,searchMs/1000,c.label);
-      await submit(c);
-      if(elites[0]!==top)stale=0;else stale++;
+      miss=0;batch.push(c);
     }
-  }));
+    if(!batch.length)break;
+    await submitBatch(batch);iter+=batch.length;
+    if(better(elites[0],top))stale=0;else stale+=batch.length;
+    progress('evolve',iter,maxIter,batch.at(-1).label);
+  }
   sortRes(results);
 
   // ---------------------------------------------------------------- 入围：挑战术卡 + 宽搜索重排 + 蒙特卡洛
   // 入围按评价排序，保留同队不同规则/配装/开场前卫；不以阵容相似为由删掉次高分。
+  const finalistLimit=Math.max(topLimit,Math.min(48,opts.finalists||12));
   const finalists=[];const seenFinalist=new Set();
   for(const r of results){if(teamElement&&!r.elementMatch)continue;
     const k=JSON.stringify([candidateIdentity(r.raws,r.front,r.rule),r.raws.map(x=>x._skills)]);
-    if(seenFinalist.has(k))continue;seenFinalist.add(k);finalists.push(r);if(finalists.length>=topLimit)break;}
+    if(seenFinalist.has(k))continue;seenFinalist.add(k);finalists.push(r);if(finalists.length>=finalistLimit)break;}
   // 全新队伍只补空缺，不能挤掉已搜索到的更高分。
-  if(broad&&island.length&&finalists.length<topLimit&&!finalists.some(f=>f.island)&&island[0].cleared===nPhases&&!island[0].failed&&island[0].elementMatch){
+  if(broad&&island.length&&finalists.length<finalistLimit&&!finalists.some(f=>f.island)&&island[0].cleared===nPhases&&!island[0].failed&&island[0].elementMatch){
     finalists.push(island[0]);
   }
   let fdone=0;
-  progress('final',-1,finalists.length,finalists.map(f=>f.label).join(' / '));
-  const outs=await Promise.all(finalists.map((f,fi)=>runner.run({type:'final',f,fi}).then(m=>{
-    errors.push(...(m?.errors||[]));progress('final',fdone++,finalists.length,f.label);return m?.r||null;
-  },err=>{errors.push({label:f.label,error:String(err?.message||err)});return null;})));
+  const tasks=[...finalists.map((f,fi)=>({type:'final',f,fi})),...incumbentInputs.map(incumbent=>({type:'incumbent',incumbent}))];
+  progress('final',0,tasks.length,finalists.map(f=>f.label).join(' / '));
+  const messages=await Promise.all(tasks.map(task=>runner.run(task).then(m=>{
+    progress('final',++fdone,tasks.length,(task.f||task.incumbent).label);return m;
+  },err=>({errors:[{label:(task.f||task.incumbent).label,error:String(err?.message||err)}]}))));
+  const outs=messages.map(m=>{errors.push(...(m?.errors||[]));return m?.r||null;});
   const seenOutput=new Set();
   const out=outs.filter(Boolean).flatMap(r=>{const {alternatives=[],...best}=r;return [best,...alternatives];}).filter(r=>{
     const k=JSON.stringify([r.members.map(m=>[rawIdentity(m.raw),m.deckSkillIds,m.front]),r.rule,r.design]);
     if(seenOutput.has(k))return false;seenOutput.add(k);return true;
   });
 
-  // 最终排名：遭遇战按平均分（失败计 0），其他按成功率
-  // 最终排名：最高分 = 平均分（失败计 0）；最稳 = 成功率；最少回合 = 中位回合（再看成功率）
+  // 最终排名：最高分 = 成功样本条件均分；失败率独立保留；零成功样本没有均分。
   out.sort(compareFinal);
-  return {elapsed:Date.now()-t0,evaluated:results.length,screened,promoted,iterations:iter,
+  return {elapsed:Date.now()-t0,evaluated:results.length,screened,promoted,iterations:iter,searchBudget:{evaluations:maxIter,batch:budget.batch,seed:opts.seed??97},incumbents:incumbentInputs.length,
     candidates:{seeds:cands.filter(c=>['base','deck','swap'].includes(c.origin)).length,random:cands.filter(c=>c.origin==='random').length,
       evolve:cands.filter(c=>c.origin==='evolve').length,pool:pool.length},
     topCards:pool.filter(x=>x.elite>0).sort((a,b)=>b.elite-a.elite).slice(0,12).map(x=>({name:name(x.c.styleId),role:x.s.role,elite:Math.round(x.elite*100)/100})),

@@ -187,20 +187,29 @@ export function designFromPlan(plan,party){
 
 // ---------------------------------------------------------------- 成功期望（蒙特卡洛）
 export function mulberry32(seed){let a=seed>>>0;return ()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;};}
+// 每个样本拥有独立的随机流。同一候选增加样本数时复用原样本，另一条轴提前结束也不改变后续样本。
+export const monteCarloSampleSeed=(seed,index)=>(seed+Math.imul(index,0x9E3779B9))>>>0;
 /**
  * 同一份设计按随机暴击（逐段）、伤害浮动 90–110%、敌方随机选单体目标与伤害浮动重放 n 次。
  * success = 全部阶段击破、无人 HP 清零且每个已执行的计划动作合法；默认允许按最后一回合续打 2 回合，onPlan 单独统计原轴内完成。
+ * scoreMean / scoreP10 仅统计成功样本；失败仍计入 success / onPlan 的分母和 fails，未成功时分数为 null。
  */
 export function monteCarlo(ctx,o,design,{n=100,seed=1,scoreOf=null}={}){
-  const rng=mulberry32(seed);let ok=0,onPlan=0;const scores=[],fails={},turns=[];
+  if(!Number.isInteger(n)||n<1)throw new RangeError('模拟次数必须是正整数');
+  if(!Number.isFinite(seed))throw new TypeError('模拟种子必须是有限数值');
+  let ok=0,onPlan=0;const scores=[],fails={},turns=[];
   for(let k=0;k<n;k++){
+    const rng=mulberry32(monteCarloSampleSeed(seed,k));
     const res=simulateDesign(ctx,{...o,critMode:'random',enemyTargeting:'random',enemyVariance:'random',rng,extendTurns:o.extendTurns??2,trace:false},design);
     const invalid=res.issues.some(x=>x.level==='error');
     const success=!invalid&&!res.failed&&res.phases.length===(ctx.phases?.length||1)&&res.phases.every(p=>p.cleared);
-    if(success){ok++;turns.push(res.turns);if(res.phases.every(p=>!p.extended))onPlan++;}else{const key=invalid?'计划含不可用行动':res.failed?`第 ${res.failed} 回合失败`:`第 ${res.phases.findIndex(p=>!p.cleared)+1||res.phases.length+1} 阶段未清`;fails[key]=(fails[key]||0)+1;}
-    if(scoreOf)scores.push(success?scoreOf(res):0);
+    if(success){ok++;turns.push(res.turns);if(res.phases.every(p=>!p.extended))onPlan++;}else{const key=res.failed?`第 ${res.failed} 回合失败`:invalid?'计划含不可用行动':`第 ${res.phases.findIndex(p=>!p.cleared)+1||res.phases.length+1} 阶段未清`;fails[key]=(fails[key]||0)+1;}
+    if(success&&scoreOf){const score=scoreOf(res);if(!Number.isFinite(score))throw new TypeError('成功样本评分必须是有限数值');scores.push(score);}
   }
   scores.sort((a,b)=>a-b);
   turns.sort((a,b)=>a-b);
-  return {n,success:ok/n,onPlan:onPlan/n,turnsMedian:turns.length?turns[Math.floor(turns.length/2)]:null,fails,scoreMean:scores.length?scores.reduce((a,b)=>a+b,0)/n:null,scoreP10:scores.length?scores[Math.floor(n*0.1)]:null};
+  const scoreMean=scores.length?scores.reduce((a,b)=>a+b,0)/scores.length:null;
+  if(scoreMean!==null&&!Number.isFinite(scoreMean))throw new RangeError('成功样本平均分超出有限数值范围');
+  return {n,successes:ok,success:ok/n,onPlan:onPlan/n,turnsMedian:turns.length?turns[Math.floor(turns.length/2)]:null,fails,
+    scoreBasis:'successful',scoreSamples:scores.length,scoreMean,scoreP10:scores.length?scores[Math.floor(scores.length*0.1)]:null};
 }

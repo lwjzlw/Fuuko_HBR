@@ -27,8 +27,53 @@ export function packOptimizationResult(targetKey, result, settings, selected = 0
     teamElement: normalized.teamElement, requested: normalized.top,
     goal: result.goal || settings.goal || 'score', elapsed: result.elapsed,
     evaluated: result.evaluated, screened: result.screened, threads: result.threads,
+    scopeKey: settings.scopeKey || null, searchVersion: result.searchVersion || null,
+    iterations: result.iterations, searchBudget: result.searchBudget, incumbents: result.incumbents,
     errorCount: result.errors?.length || 0, top,
   });
+}
+
+/** Old means included zero-score failures. Recover the successful mean only;
+ * their successful P10 cannot be recovered from the old aggregate. */
+export function successfulScores(mc = {}) {
+  const successes=Number.isInteger(mc.successes)?mc.successes:
+    Number.isFinite(mc.n)&&Number.isFinite(mc.success)?Math.round(mc.n*mc.success):null;
+  const current=mc.scoreBasis==='successful';
+  const mean=Number.isFinite(mc.scoreMean)?(current?mc.scoreMean:mc.success>0?mc.scoreMean/mc.success:null):null;
+  const p10=Number.isFinite(mc.scoreP10)&&(current||mc.success===1)?mc.scoreP10:null;
+  return {mean,p10,successes,samples:current?(mc.scoreSamples??successes):successes,converted:!current};
+}
+
+function canonical(value){
+  if(Array.isArray(value))return value.map(canonical);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().filter(k=>value[k]!==undefined).map(k=>[k,canonical(value[k])]));
+  return value;
+}
+
+/** A local cache key, not a security hash. Search depth, thread count and the
+ * automatically adopted base team do not invalidate otherwise reusable axes. */
+export function optimizationScope(targetKey,input){
+  const {target,opts,archive={},cache={},data={}}=input;
+  const choices=target.ruleOptions?.length?target.ruleOptions:[{ids:(target.rules||[]).map(r=>r.id),rules:target.rules||[],phases:target.phases}];
+  const text=JSON.stringify(canonical({targetKey,kind:target.kind,choices:choices.slice().sort((a,b)=>JSON.stringify(a.ids).localeCompare(JSON.stringify(b.ids))),
+    difficulty:target.difficulty,international:target.international,overkill:opts.overkill,allOrbs:opts.allOrbs,
+    optimizeCards:opts.optimizeCards,cards:opts.optimizeCards===false?target.cards:null,
+    dataVersions:Object.fromEntries(['catalog','skills','stats','equipment'].map(k=>[k,{schema:data[k]?.schemaVersion,version:data[k]?.version,generatedAt:data[k]?.generatedAt}])),
+    styles:archive.styles,characters:archive.characters,cardsOwned:cache.cards,accessories:cache.accessories}));
+  let a=2166136261,b=5381;for(let i=0;i<text.length;i++){const c=text.charCodeAt(i);a=Math.imul(a^c,16777619);b=(Math.imul(b,33)^c)>>>0;}
+  return `v1:${text.length}:${(a>>>0).toString(16)}:${b.toString(16)}`;
+}
+
+export function reusableCandidates(saved,targetKey,scopeKey,current=null){
+  const list=saved?.targetKey===targetKey&&(!saved.scopeKey||saved.scopeKey===scopeKey)?saved.top||[]:[];
+  const out=[],seen=new Set();
+  for(const t of [current,...list]){
+    if(!t?.members?.length||!t.design?.phases?.some(p=>p.turns?.some(r=>r.actions?.some(a=>a.s)||r.odStart||r.odEnd)))continue;
+    const value={members:t.members,design:t.design,ruleIds:t.ruleIds||[],label:t.label||'已有方案'};
+    const key=JSON.stringify([value.members,value.design,value.ruleIds]);if(seen.has(key))continue;seen.add(key);out.push(value);
+    if(out.length>=21)break;
+  }
+  return structuredClone(out);
 }
 
 export function scoreGap(best, candidate) {

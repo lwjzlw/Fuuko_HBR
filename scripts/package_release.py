@@ -37,7 +37,7 @@ TESTS = (
     'boss-model.test.mjs', 'box.test.mjs', 'cache-sync.test.mjs', 'catalog.test.mjs',
     'equipment.test.mjs', 'planner.test.mjs', 'planner-results.test.mjs', 'planner-display.test.mjs', 'progress.test.mjs', 'storage.test.mjs',
     'test_build_bosses.py', 'test_build_skills.py', 'test_build_stats.py', 'test_hbr_app.py',
-    'test_hbr_cache.py', 'test_release.py', 'optimizer.test.mjs', 'fixtures/optimizer-input.mjs', 'fixtures/community-cases.json',
+    'test_hbr_cache.py', 'test_release.py', 'optimizer.test.mjs', 'optimizer-stability.test.mjs', 'monte-carlo.test.mjs', 'fixtures/optimizer-input.mjs', 'fixtures/community-cases.json',
 )
 
 

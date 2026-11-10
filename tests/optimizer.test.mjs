@@ -6,7 +6,7 @@ import {TEAM_ELEMENTS,normalizeTeamElement,resultLimit,candidateIdentity,attackE
 import {buildParty,initialState,cloneState,startTurn,act,NORMAL} from '../public/sim/hbr/battle.mjs';
 import {membersFrom} from '../public/sim/party.mjs';
 import {search} from '../public/sim/search.mjs';
-import {designFromPlan,simulateDesign,mulberry32,monteCarlo} from '../public/sim/designer.mjs';
+import {designFromPlan,simulateDesign,mulberry32,monteCarlo,monteCarloSampleSeed} from '../public/sim/designer.mjs';
 
 test('optimizer identity preserves slots, front, full equipment rolls and support',()=>{
   const {base}=optimizerInput(),raws=base.map(m=>m.raw),front=base.map(m=>m.front);
@@ -67,10 +67,10 @@ test('lightweight Monte Carlo replay matches traced phases, issues, final state 
     for(const field of ['issues','phases','turns','failed','final','flags'])assert.deepEqual(a[field],b[field]);
     assert.ok(a.rows.length>0);assert.equal(b.rows.length,0);
   }
-  const n=40,rng=mulberry32(7),samples=Array.from({length:n},()=>simulateDesign(ctx,{critMode:'random',enemyTargeting:'random',enemyVariance:'random',extendTurns:2,rng},design));
+  const n=40,samples=Array.from({length:n},(_,i)=>simulateDesign(ctx,{critMode:'random',enemyTargeting:'random',enemyVariance:'random',extendTurns:2,rng:mulberry32(monteCarloSampleSeed(7,i))},design));
   assert.ok(samples.every(s=>!s.failed&&s.phases.every(p=>p.cleared)));
   const scoreOf=s=>s.phases.reduce((v,p)=>v+p.shown,0),scores=samples.map(scoreOf).sort((a,b)=>a-b),turns=samples.map(s=>s.turns).sort((a,b)=>a-b);
-  const expected={n,success:1,onPlan:samples.filter(s=>s.phases.every(p=>!p.extended)).length/n,turnsMedian:turns[Math.floor(n/2)],fails:{},scoreMean:scores.reduce((a,b)=>a+b,0)/n,scoreP10:scores[Math.floor(n*0.1)]};
+  const expected={n,successes:n,success:1,onPlan:samples.filter(s=>s.phases.every(p=>!p.extended)).length/n,turnsMedian:turns[Math.floor(n/2)],fails:{},scoreBasis:'successful',scoreSamples:n,scoreMean:scores.reduce((a,b)=>a+b,0)/n,scoreP10:scores[Math.floor(n*0.1)]};
   assert.deepEqual(monteCarlo(ctx,{},design,{n,seed:7,scoreOf}),expected);
 });
 
@@ -83,7 +83,7 @@ test('a clear after skipping an illegal planned action is a failed Monte Carlo s
   const replay=simulateDesign(ctx,{critMode:'expected'},design);
   assert.ok(replay.phases.every(p=>p.cleared));assert.ok(replay.issues.some(x=>x.level==='error'));
   const mc=monteCarlo(ctx,{},design,{n:20,seed:7,scoreOf:()=>100000});
-  assert.equal(mc.success,0);assert.equal(mc.onPlan,0);assert.equal(mc.scoreMean,0);assert.equal(mc.scoreP10,0);
+  assert.equal(mc.success,0);assert.equal(mc.onPlan,0);assert.equal(mc.successes,0);assert.equal(mc.scoreSamples,0);assert.equal(mc.scoreMean,null);assert.equal(mc.scoreP10,null);
   assert.equal(mc.fails['计划含不可用行动'],20);
 });
 

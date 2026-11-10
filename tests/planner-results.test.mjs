@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeResultSettings, packOptimizationResult, scoreGap, ruleCombinations} from '../public/planner-results.mjs';
+import {normalizeResultSettings, packOptimizationResult, scoreGap, ruleCombinations,successfulScores,optimizationScope,reusableCandidates} from '../public/planner-results.mjs';
 
 test('old or invalid settings retain ten results and unrestricted teams', () => {
   assert.deepEqual(normalizeResultSettings(), {teamElement: '', top: 10});
@@ -39,4 +39,42 @@ test('rule search includes no-rule and smaller subsets rather than forcing maxim
   assert.deepEqual(combos, [[], [1], [1, 2], [1, 3], [2], [2, 3], [3]]);
   assert.deepEqual(ruleCombinations(rules, 0), [[]]);
   assert.deepEqual(ruleCombinations([], 1), [[]]);
+});
+
+test('old zero-filled averages migrate to successful means without inventing successful quantiles',()=>{
+  assert.deepEqual(successfulScores({n:20,success:0.25,scoreMean:25000,scoreP10:0}),{mean:100000,p10:null,successes:5,samples:5,converted:true});
+  assert.equal(successfulScores({n:20,success:0,scoreMean:0,scoreP10:0}).mean,null);
+  assert.equal(successfulScores({n:20,success:1,scoreMean:100,scoreP10:90}).p10,90);
+  assert.deepEqual(successfulScores({n:20,success:0.25,successes:5,scoreBasis:'successful',scoreSamples:5,scoreMean:100000,scoreP10:99000}),
+    {mean:100000,p10:99000,successes:5,samples:5,converted:false});
+  assert.equal(successfulScores({scoreMean:123}).mean,null);
+});
+
+test('history compatibility ignores depth/adopted team but tracks targets, resources and battle settings',()=>{
+  const input={target:{kind:'wave',difficulty:40,international:true,phases:[{enemies:[{hp:100}]}],rules:[],cards:[null]},
+    opts:{scale:'standard',overkill:true,allOrbs:true,optimizeCards:true},archive:{styles:{A:{owned:true}}},cache:{cards:[{styleId:'A'}],accessories:[]},base:[{styleId:'A'}]};
+  const key=optimizationScope('wave:test',input);
+  assert.equal(key,optimizationScope('wave:test',{...input,opts:{...input.opts,scale:'deep',threads:12},base:[{styleId:'B'}]}));
+  assert.notEqual(key,optimizationScope('wave:other',input));
+  assert.notEqual(key,optimizationScope('wave:test',{...input,target:{...input.target,difficulty:35}}));
+  assert.notEqual(key,optimizationScope('wave:test',{...input,opts:{...input.opts,allOrbs:false}}));
+  assert.notEqual(key,optimizationScope('wave:test',{...input,cache:{...input.cache,cards:[{styleId:'A',limitBreak:4}]}}));
+  for(const table of ['catalog','skills','stats','equipment']){
+    const a={...input,data:{[table]:{schemaVersion:1,generatedAt:'first'}}};
+    const b={...input,data:{[table]:{schemaVersion:1,generatedAt:'updated'}}};
+    assert.notEqual(optimizationScope('wave:test',a),optimizationScope('wave:test',b));
+  }
+});
+
+test('compatible history passes only axes and members for fresh scoring and keeps current manual axis',()=>{
+  const t={members:[{styleId:'A'}],design:{phases:[{turns:[{actions:[{u:0,s:'hit'}]}]}]},ruleIds:[1],label:'previous',mc:{scoreMean:999999}};
+  const saved={targetKey:'wave:test',scopeKey:'same',top:[t]},current={...t,label:'current'};
+  const list=reusableCandidates(saved,'wave:test','same',current);
+  assert.equal(list.length,1);assert.equal(list[0].mc,undefined);assert.equal(list[0].label,'current');
+  assert.deepEqual(reusableCandidates(saved,'wave:other','same'),[]);
+  assert.deepEqual(reusableCandidates(saved,'wave:test','changed'),[]);
+  assert.equal(reusableCandidates({...saved,scopeKey:null},'wave:test','new').length,1);
+  list[0].members[0].styleId='changed';assert.equal(t.members[0].styleId,'A');
+  const packed=packOptimizationResult('wave:test',{top:[t],searchBudget:{evaluations:144},incumbents:1},{scopeKey:'same'});
+  assert.equal(packed.scopeKey,'same');assert.equal(packed.searchBudget.evaluations,144);assert.equal(packed.incumbents,1);
 });

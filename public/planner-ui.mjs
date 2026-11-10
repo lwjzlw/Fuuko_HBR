@@ -15,7 +15,8 @@ import {cardById} from './sim/cards.mjs';
 import {cardSeenProb} from './sim/optimizer.mjs';
 import {axisView} from './planner-axis.mjs';
 import {loadoutDetailsHtml} from './planner-loadout.mjs';
-import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations} from './planner-results.mjs';
+import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations,successfulScores,optimizationScope,reusableCandidates} from './planner-results.mjs';
+import {SEARCH_PRESETS} from './sim/optimizer-options.mjs';
 
 const KIND_LABEL={scoreAttack:'积分挑战',dimension:'异时层',wave:'遭遇战'};
 const CRIT_LABEL={expected:'期望值',none:'不暴击',all:'全暴击'};
@@ -63,6 +64,7 @@ export function createPlannerUI(ctx){
     const P=planner(),saved=P.selection,open=openEvents();
     if(P.optSettings)Object.assign(optOpt,P.optSettings);
     Object.assign(optOpt,normalizeResultSettings(optOpt));
+    if(!SEARCH_PRESETS[optOpt.scale])optOpt.scale='standard';
     const savedOk=saved&&index.events.some(x=>x.kind===saved.kind&&x.label===saved.label);
     const savedOpen=savedOk&&open.some(x=>x.kind===saved.kind&&x.label===saved.label);
     if(savedOpen||(savedOk&&!open.length))Object.assign(sel,{kind:saved.kind,label:saved.label,stage:saved.stage??-1,enemy:saved.enemy||'',rules:saved.rules||[]});
@@ -120,7 +122,7 @@ export function createPlannerUI(ctx){
 </section>
 <section class="panel pl-best" id="pl-best">${bestHtml(ev,stage)}</section>
 <details class="panel pl-more" ${moreOpen?'open':''}>
-  <summary>更多细致选项 <small>固定配队 · 特殊规则 · 搜索时长 · 逐回合修改 · 伤害计算器</small></summary>
+  <summary>更多细致选项 <small>固定配队 · 特殊规则 · 搜索投入 · 逐回合修改 · 伤害计算器</small></summary>
   <div class="pl-more-body">
     <section class="pl-sub"><h3>求解设置</h3>${settingsHtml(ev)}</section>
     <section class="pl-sub">
@@ -202,13 +204,11 @@ export function createPlannerUI(ctx){
 
   // ---------------------------------------------------------------- 求最佳轴（配置优化：队伍 / 规则 / 技能 / 饰品 / 战术卡 + 排轴）
   let cachePool=null,optWorker=null,optProgress=null,optResult=null,optResultKey='';
-  // searchMs = 进化搜索的时间预算（另加种子评估约 15 秒、入围挑战术卡与随机模拟约 0.5–1 分钟）。时长按 12 个计算线程、遭遇战 5 阶段 + 规则搜索估计
-  const OPT_SCALE={quick:{label:'快',searchMs:20000,randomSeeds:6,mcRuns:60},standard:{label:'标准',searchMs:60000,randomSeeds:12,mcRuns:120},
-    deep:{label:'深入',searchMs:240000,randomSeeds:20,mcRuns:240}};
-  const optOpt={beam:6,screenBeam:4,maxTurns:6,scale:'standard',broad:true,fixedTeam:false,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10};
-  const GOALS={score:'最高分（期望总分）',stable:'最稳（成功率优先）',fast:'最少回合'};
-  const optStepLabel={evaluate:'评估候选',evolve:'进化搜索',final:'挑战术卡与随机模拟'};
-  const optProgressText=x=>`${optStepLabel[x.step]||x.step} ${x.step==='evolve'?`${Math.round(x.done)}/${Math.round(x.total)} 秒`:`${x.done+1}/${x.total}`} · ${x.label} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
+  const OPT_SCALE=SEARCH_PRESETS;
+  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10};
+  const GOALS={score:'最高分（通关均分）',stable:'最稳（成功率优先）',fast:'最少回合'};
+  const optStepLabel={evaluate:'评估候选',evolve:'改进候选',final:'深排与少量随机模拟',incumbent:'复评已有方案'};
+  const optProgressText=x=>`${optStepLabel[x.step]||x.step}${x.total>0?` ${Math.max(0,Math.min(x.total,x.done))}/${x.total}${x.step==='evolve'?' 次评估':''}`:''} · ${x.label} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
   const pct=x=>x==null?'—':`${Math.round(x*100)}%`;
   function saveOpt(){const P=planner();P.optSettings={scale:optOpt.scale,goal:optOpt.goal,fixedTeam:optOpt.fixedTeam,searchRules:optOpt.searchRules,allOrbs:optOpt.allOrbs,optimizeCards:optOpt.optimizeCards,overkill:optOpt.overkill,...normalizeResultSettings(optOpt)};save();}
   function resultsFor(key){return optResultKey===key&&optResult?optResult:(planner().lastOptimization?.targetKey===key?planner().lastOptimization:null);}
@@ -219,7 +219,7 @@ export function createPlannerUI(ctx){
     const wave=ev.kind==='wave',rules=(ev.kind==='scoreAttack'||wave)?ev.rules||[]:[];
     const goal=goalFor(ev);
     return `<div class="field-grid three">
-  <label>搜索时长<select id="opt-scale" ${optWorker?'disabled':''}>${Object.entries(OPT_SCALE).map(([k,v])=>`<option value="${k}" ${optOpt.scale===k?'selected':''}>${v.label}</option>`).join('')}</select></label>
+  <label>搜索投入<select id="opt-scale" ${optWorker?'disabled':''}>${Object.entries(OPT_SCALE).map(([k,v])=>`<option value="${k}" ${optOpt.scale===k?'selected':''}>${v.label} · 最多 ${v.searchEvals} 次改进</option>`).join('')}</select></label>
   <label>以什么为准<select id="opt-goal" ${optWorker?'disabled':''}>${Object.entries(GOALS).filter(([k])=>wave||k!=='score').map(([k,v])=>`<option value="${k}" ${goal===k?'selected':''}>${v}</option>`).join('')}</select></label>
 </div>
 <div class="pl-checks">
@@ -230,7 +230,8 @@ export function createPlannerUI(ctx){
 </div>
 ${rules.length?`<div class="pl-rules"><p class="subtle compact">${optOpt.searchRules?'自动选时，下面勾的规则是起点；':'不自动选时，按下面勾的规则求解；'}每期可选 ${ev.maxRules||1} 条，已选 ${sel.rules.length}。</p>
 ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-rule="${r.id}" ${sel.rules.includes(r.id)?'checked':''}>${e(r.name)} <span class="tag">+${r.grade}%</span> <small class="subtle">${e(r.parts.map(p=>p.skillType).join('、')||r.type)}</small></label>`).join('')}</div>`:''}
-<p class="subtle compact">不固定配队时，候选包括当前配队、游戏里的 6 人编队、同角色换卡面，以及从全部已持有 SS/SSR 随机组的新队，再按模拟里的贡献换人、交叉、换耳环做进化搜索。技能按格数上限保留排轴实际用到的；成功率来自随机模拟（逐段暴击、伤害浮动、敌方随机目标）。${wave?`战术卡每次 3 选 1、可重抽 5 次，指定一张出现的概率约 ${Math.round(cardSeenProb(1)*100)}%。`:''}</p>`;
+<p class="subtle compact">固定搜索量，耗时随队伍和关卡变化；提高搜索投入会尝试更多候选并加宽排轴搜索。已有方案会重新评估并保留参选。精评每条轴 ${OPT_SCALE[optOpt.scale].mcRuns} 次随机模拟，均分只计通关样本，失败率单独统计。</p>
+<p class="subtle compact">不固定配队时，候选包括当前配队、游戏里的 6 人编队、同角色换卡面，以及从全部已持有 SS/SSR 组的新队，再按模拟里的贡献换人、交叉、换耳环。技能按格数上限保留排轴实际用到的；成功率来自随机模拟（逐段暴击、伤害浮动、敌方随机目标）。${wave?`战术卡每次 3 选 1、可重抽 5 次，指定一张出现的概率约 ${Math.round(cardSeenProb(1)*100)}%。`:''}</p>`;
   }
 
   function bestHtml(ev,stage){
@@ -241,17 +242,18 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
     const design=P.designs?.[k];
     const hasAxis=design?.phases?.some(p=>p.turns?.some(t=>t.actions?.some(a=>a.s)||t.odStart||t.odEnd));
     if(!hasAxis&&!R)return `<div class="pl-empty"><h2>还没有这一期的轴</h2><p class="subtle">点上面的「求最佳轴」。会自动读取本机游戏缓存（只读）里的已持有卡面、饰品和当前编队。</p></div>`;
-    const maxScore=R?.top?.length?Math.max(...R.top.map(t=>t.mc.scoreMean??0)):0;
-    const chips=R?.top?.length?`<p class="subtle compact">本次按${e(GOALS[R.goal]||'模拟结果')}排列 · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${R.top.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
-    <div class="pl-plans">${R.top.map((t,i)=>{const gap=scoreGap(maxScore,t.mc.scoreMean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
-      <b>候选 ${i+1}${i===selected?' · 已采用':''}</b>${t.newTeam?'<span class="tag">新队伍</span>':''}<span>按轴 ${pct(t.mc.onPlan)} · 通关 ${pct(t.mc.success)} · ${t.mc.n??'?'} 次</span>${t.mc.scoreMean!=null&&wave?`<span>均分 ${n(Math.round(t.mc.scoreMean))}${gap>=0.5?` · 距最高 ${n(Math.round(gap))}`:''}</span>`:''}<span>${t.mc.turnsMedian??t.turns} 回合${t.teamElement?` · ${ELEM_LABEL[t.teamElement]||t.teamElement} ${pct(t.elementShare)}`:''}</span></button>`;}).join('')}</div>`:'';
+    const maxScore=R?.top?.length?Math.max(...R.top.map(t=>successfulScores(t.mc).mean??0)):0;
+    const legacyScores=wave&&R?.top?.some(t=>successfulScores(t.mc).converted);
+    const chips=R?.top?.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${R.top.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
+    <div class="pl-plans">${R.top.map((t,i)=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
+      <b>候选 ${i+1}${i===selected?' · 已采用':''}</b>${t.newTeam?'<span class="tag">新队伍</span>':''}<span>按轴 ${pct(t.mc.onPlan)} · 通关 ${pct(t.mc.success)}</span><span>失败 ${sc.successes==null||t.mc.n==null?'—':t.mc.n-sc.successes}/${t.mc.n??'?'} 次</span>${wave?`<span>${sc.mean!=null?`通关均分 ${n(Math.round(sc.mean))} · ${sc.samples??'?'} 个成功样本${gap>=0.5?` · 距最高 ${n(Math.round(gap))}`:''}`:'暂无通关分数'}</span>`:''}<span>${t.mc.turnsMedian??t.turns} 回合${t.teamElement?` · ${ELEM_LABEL[t.teamElement]||t.teamElement} ${pct(t.elementShare)}`:''}</span></button>`;}).join('')}</div>${legacyScores?'<p class="subtle compact">旧均分已剔除失败的零分；重新搜索会用新样本复评已有轴并更新排序。</p>':''}`:'';
     let axis='',sum=null;
     if(hasAxis){
       const c=buildCtx(ev,stage);
       if(c.error)axis=`<p class="pill-error">${e(c.error)}</p>`;
       else{const v=axisView({e,n,party:c.party,phases:c.phases,statusTypes:skills.statusTypes,design,critMode:'expected'});axis=v.html;sum=v.summary;}
     }
-    const s=summary||{};
+    const s=summary||{},scores=successfulScores({...s,n:s.samples});
     const team=(s.team||[]).map(x=>`<span class="pl-member">${e(x)}</span>`).join('');
     const loadout=(s.loadout||[]).length?`<details class="pl-loadout" open><summary>配置详情：队伍、技能、饰品、支援卡${wave&&s.cardNames?.some(Boolean)?'、战术卡':''}</summary>
 ${wave&&s.cardNames?.some(Boolean)?`<p class="compact">${s.cardNames.map((c,p)=>p&&c?`第 ${p+1} 阶段前选 <b>${e(c)}</b>`:'').filter(Boolean).join('　')}</p>`:''}
@@ -262,8 +264,9 @@ ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p clas
     const stats=summary?`<div class="pl-best-stats">
       <div><strong>${pct(s.onPlan)}</strong><span>模拟按轴完成${s.samples?' · '+s.samples+' 次':''}</span></div>
       <div><strong>${pct(s.success)}</strong><span>通关（含最多 2 回合续打）</span></div>
-      ${wave&&s.scoreMean!=null?`<div><strong>${n(Math.round(s.scoreMean))}</strong><span>平均分（失败计 0）</span></div>`:''}
-      ${wave&&s.scoreP10!=null?`<div><strong>${n(Math.round(s.scoreP10))}</strong><span>分数第 10 百分位</span></div>`:''}
+      ${s.samples&&scores.successes!=null?`<div><strong>${s.samples-scores.successes}/${s.samples}</strong><span>失败次数（不计入均分）</span></div>`:''}
+      ${wave?`<div><strong>${scores.mean!=null?n(Math.round(scores.mean)):'—'}</strong><span>通关均分 · ${scores.samples??'?'} 个成功样本</span></div>`:''}
+      ${wave&&scores.p10!=null?`<div><strong>${n(Math.round(scores.p10))}</strong><span>通关分数第 10 百分位</span></div>`:''}
       <div><strong>${s.turnsMedian??s.turns??'—'}</strong><span>回合（中位）</span></div>
       ${s.ruleNames?`<div><strong class="pl-rule-name">${e(s.ruleNames.join('、')||'不选')}</strong><span>特殊规则</span></div>`:''}
     </div>`:sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
@@ -276,7 +279,8 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
   }
 
   function bestSummary(t){
-    return {label:t.label,newTeam:!!t.newTeam,team:t.team,ruleNames:t.ruleNames||null,success:t.mc.success,onPlan:t.mc.onPlan,scoreMean:t.mc.scoreMean,scoreP10:t.mc.scoreP10,samples:t.mc.n,teamElement:t.teamElement,elementShare:t.elementShare,
+    const sc=successfulScores(t.mc);
+    return {label:t.label,newTeam:!!t.newTeam,team:t.team,ruleNames:t.ruleNames||null,success:t.mc.success,onPlan:t.mc.onPlan,scoreMean:sc.mean,scoreP10:sc.p10,scoreBasis:'successful',scoreSamples:sc.samples,successes:sc.successes,samples:t.mc.n,teamElement:t.teamElement,elementShare:t.elementShare,
       turnsMedian:t.mc.turnsMedian,turns:t.turns,loadout:t.loadout||[],cardNames:(t.cards||[]).map(c=>c?cardById(c)?.name||c:null),at:Date.now()};
   }
   /** 采用第 i 个方案：研究室的配队、该期排轴、特殊规则都换成它（游戏本身不会被修改）。 */
@@ -325,17 +329,19 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     const input={data:{catalog,skills,stats:statsData,equipment},archive:getArchive(),cache:cachePool,base:P.members,
       target:{kind:ev.kind,ev:{elements:ev.elements||[]},rules:c.rules,phases:c.phases,cards:d.phases.map(p=>p.card||null),difficulty:ws.difficulty,international:ws.international,ruleOptions,ruleIndex},
       opts:{...optOpt,...OPT_SCALE[optOpt.scale],goal:goalFor(ev),overkill:ws.overkill!==false&&optOpt.overkill}};
+    input.opts.scopeKey=optimizationScope(k,input);
+    input.incumbents=reusableCandidates(resultsFor(k),k,input.opts.scopeKey,{members:P.members,design:d,ruleIds:c.rules.map(r=>r.id),label:'当前已有轴'});
     optResult=null;optResultKey=k;optProgress={step:'evaluate',done:-1,total:0,label:'准备',elapsed:0};
     const w=new Worker('/sim/optimizer-worker.mjs',{type:'module'});optWorker=w;
     w.onmessage=m=>{const x=m.data;
       if(x.stage==='progress'){optProgress=x;const el=host.querySelector('#opt-progress');if(el)el.textContent=optProgressText(x);}
       else{
         w.terminate();optWorker=null;optProgress=null;
-        if(x.stage==='done'){optResult={...x.result,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
+        if(x.stage==='done'){optResult={...x.result,targetKey:k,scopeKey:input.opts.scopeKey,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
           if(optResult?.top?.length){const current=planner();current.lastOptimization=packOptimizationResult(k,optResult,input.opts);
             if(current===P&&JSON.stringify(current.members)===originalMembers){adopt(0,ev,stage);notice(`本次找到 ${optResult.top.length} 个候选，已采用第 1 个，模拟成功率 ${pct(optResult.top[0].mc.success)}。可点击其他候选比较。`);}
             else{optResult.selected=-1;current.lastOptimization.selected=-1;save();notice(`本次找到 ${optResult.top.length} 个候选。求解期间档案或配队有更新，已保留你的改动；点击候选后采用。`);}}
-          else notice(`本次没有找到${input.opts.teamElement?ELEM_LABEL[input.opts.teamElement]+'属性的':''}合适方案。可增加搜索时长或调整配队；搜索无结果不代表不存在。`,true);}
+          else notice(`本次没有找到${input.opts.teamElement?ELEM_LABEL[input.opts.teamElement]+'属性的':''}合适方案。可提高搜索投入或调整配队；搜索无结果不代表不存在。`,true);}
         else notice('求解失败：'+x.message,true);
         mount(host);}
     };
