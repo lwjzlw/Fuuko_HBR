@@ -7,9 +7,15 @@ export function groupAxisRows(rows){
   const out=[],byId=new Map();let pending=[];
   for(const r of rows){
     if(r.kind==='turn'||r.kind==='card'){pending=[];continue;}
-    if(r.kind==='od'){pending.push(r);continue;}
+    if(r.kind==='od'){
+      const previous=out.at(-1);
+      // 后开在普通/追加行动结束后发动，不能放到下一轮 OD 行动之后。
+      if(r.window==='turnEnd'&&previous?.phase===r.phase&&previous.turn===r.turn)previous.after.push(r);
+      else pending.push(r);
+      continue;
+    }
     if(r.kind==='round'){
-      const row={...r,actions:[],events:pending};pending=[];
+      const row={...r,actions:[],events:[],before:pending,after:[]};pending=[];
       out.push(row);byId.set(r.roundId,row);continue;
     }
     const row=byId.get(r.roundId);
@@ -22,6 +28,7 @@ export function groupAxisRows(rows){
 
 export function renderAxisRows(rounds,{e,n,party}){
   const name=i=>party[i]?.name||'#'+i;
+  const odAction=v=>`<div class="axis-od-action" data-od-window="${e(v.window)}" aria-label="${e(v.label)}"><b>${v.window==='turnEnd'?'后开 OD':'前开 OD'}</b><small>Lv.${e(String(v.level))}</small></div>`;
   return `<ol class="axis-turns">${rounds.flatMap(r=>{
     // 以计划顺序排三格；提前击杀仍保留后两人的位置，不能伪装成已行动。
     const planned=r.planned||[],used=new Set();
@@ -38,7 +45,7 @@ export function renderAxisRows(rounds,{e,n,party}){
       const stopped=r.events.some(v=>v.kind==='kill')&&r.actions.at(-1)?.enemy?.hp<=0;
       return `<li class="axis-row axis-${r.round==='extra'?'extra':r.round==='main'?'main':'inod'}" data-round="${e(r.round)}">
 <div class="axis-t"><b>T${r.turn}</b><span>${e(roundLabel(r.round))}${ci?'（续）':''}</span>${r.parentRound?`<small>${e(roundLabel(r.parentRound))} 内</small>`:''}</div>
-<div class="axis-body"><div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${e(a.skill||'未安排行动')}</span><small>${a.executed?`伤害 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>
+<div class="axis-body"><div class="axis-action-flow">${ci===0?(r.before||[]).map(odAction).join(''):''}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${e(a.skill||'未安排行动')}</span><small>${a.executed?`伤害 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
 ${events.length?`<div class="axis-events">${events.map(v=>`<span class="axis-event axis-${v.kind}">${v.unit!=null?e(name(v.unit))+' · ':''}${e(v.label)}</span>`).join('')}</div>`:''}</div></li>`;
     });
   }).join('')}</ol>`;

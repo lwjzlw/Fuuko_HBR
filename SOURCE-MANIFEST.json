@@ -809,8 +809,8 @@
     },
     {
       "path": "public/planner-axis.mjs",
-      "bytes": 4430,
-      "sha256": "a7b41415adc5c10181a444cd48c573ee874fa962c0c0c9aa2975aaa9ed87d662"
+      "bytes": 5066,
+      "sha256": "8706cc3d57d75c7e51374ec915533dabf43616fe4f0a56cc2608e17850b1a8db"
     },
     {
       "path": "public/planner-loadout.mjs",
@@ -934,8 +934,8 @@
     },
     {
       "path": "public/style.css",
-      "bytes": 30461,
-      "sha256": "a1b1164a9a8d6a113dfcd7882a373ffc1f29cffdad7b5011d11b506c2bff0732"
+      "bytes": 30939,
+      "sha256": "29f7fa31b10dae12219b5ad9cc843ab635d29b797444a38adbb23e69b9f896d2"
     },
     {
       "path": "public/team-verification.mjs",
@@ -1054,8 +1054,8 @@
     },
     {
       "path": "tests/planner-display.test.mjs",
-      "bytes": 6125,
-      "sha256": "8055a9b62e146dd5c7f82ed59eacf1e97ae96012709f83be5ed1e535d612e60c"
+      "bytes": 7213,
+      "sha256": "871c39b5140bca8185da4770e46a27d9c97738403c56013d5781a2c4c3d75557"
     },
     {
       "path": "tests/planner-results.test.mjs",

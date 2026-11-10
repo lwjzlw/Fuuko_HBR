@@ -378,7 +378,10 @@ button.link:hover{text-decoration:underline}
 .axis-t span { font-size: 12px; font-weight: 600; }
 .axis-t small { font-size: 11px; color: var(--text-3); }
 .axis-body { min-width: 0; }
-.axis-acts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.axis-action-flow { display: flex; gap: 6px; align-items: stretch; }
+.axis-acts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; min-width: 0; flex: 1; }
+.axis-od-action { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; flex: 0 0 76px; padding: 6px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 12px; text-align: center; }
+.axis-od-action small { font-size: 11px; color: inherit; }
 .axis-act { display: flex; flex-direction: column; position: relative; gap: 4px; padding: 8px 9px 8px 25px; border-radius: 8px; background: var(--paper);
   border: 1px solid var(--border); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
 .axis-order { position: absolute; top: 8px; left: 8px; font-size: 10px; color: var(--text-3); }
@@ -390,8 +393,6 @@ button.link:hover{text-decoration:underline}
 .axis-empty { margin: auto 0; }
 .axis-events { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .axis-event { padding: 2px 8px; border-radius: 5px; font-size: 11px; background: var(--surface-2); overflow-wrap: anywhere; }
-.axis-od { font-weight: 700;
-  background: var(--accent); color: #fff; }
 .axis-kill { font-weight: 600;
   background: color-mix(in srgb, var(--gold) 22%, var(--paper)); color: color-mix(in srgb, var(--gold) 60%, var(--text)); }
 .axis-issues { font-size: 12.5px; }
@@ -400,6 +401,9 @@ button.link:hover{text-decoration:underline}
   .pl-axis, .pl-loadout, .dz-result { scroll-margin-top: 120px; }
   .axis-turns li { grid-template-columns: 48px minmax(0,1fr); padding: 8px 5px; gap: 5px; }
   .axis-acts { gap: 3px; }
+  .axis-action-flow { gap: 3px; }
+  .axis-od-action { flex-basis: 42px; padding: 5px 2px; font-size: 10px; }
+  .axis-od-action small { font-size: 10px; }
   .axis-act { padding: 22px 5px 6px; font-size: 11px; }
   .axis-order { top: 4px; left: 5px; }
   .axis-act small, .axis-t small { font-size: 10px; }

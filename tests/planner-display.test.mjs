@@ -23,13 +23,29 @@ test('real replay separates front/end OD and their extras into three-action rows
     odEnd:{level:2,rounds:[{actions:actions()},{actions:actions()}]}}]}]};
   const res=simulateDesign(ctx,{},design),noTrace=simulateDesign(ctx,{trace:false},design),rows=groupAxisRows(res.rows);
   assert.deepEqual(rows.map(r=>r.round),['od1','extra','main','extra','od1','od2']);
-  assert.equal(rows[0].events[0].label,'前开 OD Lv.1');assert.equal(rows[4].events[0].label,'后开 OD Lv.2');
+  assert.equal(rows[0].before[0].label,'前开 OD Lv.1');assert.equal(rows[3].after[0].label,'后开 OD Lv.2');
+  assert.equal(rows[4].before.length,0);assert.equal(rows[4].after.length,0);
   assert.equal(rows[1].parentRound,'od1');assert.equal(rows[3].parentRound,undefined);
   assert.deepEqual(res.final,noTrace.final);assert.deepEqual(res.phases,noTrace.phases);assert.deepEqual(res.issues,noTrace.issues);
   const html=renderAxisRows(rows,{e,n,party:ctx.party});
   assert.equal((html.match(/class="axis-row /g)||[]).length,6);
   assert.equal((html.match(/class="axis-act[ "]/g)||[]).length,18);
   assert.match(html,/OD 2/);assert.match(html,/OD 1 内/);
+  const renderedRows=html.split('<li ').slice(1);
+  assert.ok(renderedRows[0].indexOf('data-od-window="turnStart"')<renderedRows[0].indexOf('class="axis-acts"'));
+  assert.ok(renderedRows[3].indexOf('data-od-window="turnEnd"')>renderedRows[3].lastIndexOf('class="axis-act"'));
+  assert.ok(!renderedRows[4].includes('data-od-window'));
+});
+
+test('end OD follows normal actions when there is no extra; failed activation is not rendered',()=>{
+  const ctx=battle(),design={phases:[{turns:[{actions:actions(),odEnd:{level:1,rounds:[{actions:actions()}]}}]}]};
+  const rows=groupAxisRows(simulateDesign(ctx,{},design).rows);
+  assert.deepEqual(rows.map(r=>r.round),['main','od1']);
+  assert.equal(rows[0].after[0].window,'turnEnd');assert.equal(rows[1].before.length,0);
+  ctx.party[0].passives=[];
+  const failed=simulateDesign(ctx,{},design);
+  assert.ok(failed.issues.some(x=>/发动失败/.test(x.msg)));
+  assert.ok(!renderAxisRows(groupAxisRows(failed.rows),{e,n,party:ctx.party}).includes('data-od-window'));
 });
 
 test('break and kill stay on the triggering round and later actions are visibly unexecuted',()=>{
