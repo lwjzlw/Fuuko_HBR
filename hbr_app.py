@@ -29,7 +29,7 @@ import hbr_enemy_parameters  # noqa: E402
 
 APP_ID = "hbr"
 APP_NAME = "HBR 研究室"
-VERSION = "0.11.3"
+VERSION = "0.12.0"
 PORT = 8787
 BACKUP_KEEP = 40
 SNAPSHOT_KEEP = 60

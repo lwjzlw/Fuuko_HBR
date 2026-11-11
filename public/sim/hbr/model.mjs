@@ -100,3 +100,4 @@ export function effectModel(skill,part){
 }
 
 function round1(x){return Math.round(x*10)/10;}
+export const hasSupportResonance=(style,shift)=>style?.tier==='SSR'||(style?.tier==='SS'&&shift===true);

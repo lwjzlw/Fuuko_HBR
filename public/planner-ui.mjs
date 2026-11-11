@@ -19,6 +19,7 @@ import {gearSlots,availableGear,changeAccessory,importMember} from './planner-ge
 import {partyContextKey,setPlannerMembers} from './planner-results.mjs';
 import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations,successfulScores,optimizationScope,reusableCandidates,visibleCandidates} from './planner-results.mjs';
 import {SEARCH_PRESETS} from './sim/optimizer-options.mjs';
+import {longMinutes} from './sim/long-search.mjs';
 import {plannerPhases,plannerStages,withEnemyParameters,enemyParameterKey,enemyContextKey,BATTLE_MODEL_VERSION,resultMatchesEnemies,sameRuleIds} from './planner-enemies.mjs';
 
 const KIND_LABEL={scoreAttack:'积分挑战',dimension:'异时层',wave:'遭遇战'};
@@ -95,7 +96,7 @@ export function createPlannerUI(ctx){
       })).join('')}</tbody></table></div></details>`;
     }catch(err){return `<p class="pill-error">敌方参数不可用：${e(err.message)}</p>`;}
   }
-  const SCALE_HINT={quick:'快速搜索',standard:'标准搜索',deep:'深入搜索'};
+  const SCALE_HINT={quick:'快速搜索',standard:'标准搜索',deep:'深入搜索',long:'长时联合搜索'};
 
   async function mount(host){
     if(!index&&!loadError){host.innerHTML='<p class="subtle">正在加载 Boss 目录与技能表…</p>';await load();}
@@ -128,6 +129,8 @@ export function createPlannerUI(ctx){
   </div>`:''}
   ${ev&&stage?enemyParametersHtml(ev,stage):''}
   <div class="pl-search-options">
+    <label>搜索投入<select id="opt-scale" ${optWorker?'disabled':''}>${Object.entries(OPT_SCALE).map(([k,v])=>`<option value="${k}" ${optOpt.scale===k?'selected':''}>${v.label}</option>`).join('')}</select></label>
+    ${optOpt.scale==='long'?`<label>本次追加时长<select id="opt-duration" ${optWorker?'disabled':''}>${[15,60,180,360,720].map(v=>`<option value="${v}" ${v===optOpt.longMinutes?'selected':''}>${v<60?v+' 分钟':v/60+' 小时'}</option>`).join('')}</select></label>`:''}
     <label>队伍输出属性<select id="opt-element" ${optWorker?'disabled':''}>${TEAM_ELEMENTS.map(k=>`<option value="${k}" ${optOpt.teamElement===k?'selected':''}>${k?ELEM_LABEL[k]+'属性':'不限属性'}</option>`).join('')}</select></label>
     <label>候选数量<select id="opt-top" ${optWorker?'disabled':''}>${[5,10,20].map(k=>`<option value="${k}" ${optOpt.top===k?'selected':''}>最多 ${k} 个</option>`).join('')}</select></label>
     <label>最低成功率（%）<input id="opt-min-success" type="number" min="0" max="100" step="1" value="${Math.round(optOpt.minSuccess*100)}" ${optWorker?'disabled':''}></label>
@@ -137,8 +140,8 @@ export function createPlannerUI(ctx){
   <p class="subtle compact">成功率下限 0 表示不限；下限立即筛选已有候选，重新搜索会按此要求挑选新方案。比例来自有限次数模拟，100% 不代表实战必过。</p>
   <div class="pl-go">
     <button id="opt-run" class="primary pl-run" type="button" ${optWorker||!ev?'disabled':''}>${optWorker?'正在求解…':'求最佳轴'}</button>
-    ${optWorker&&optWorker!=='loading'?'<button id="opt-stop" type="button">停止</button>':''}
-    <span class="subtle" id="opt-progress">${optWorker?e(optProgress?optProgressText(optProgress):'准备中…'):`${SCALE_HINT[optOpt.scale]||''} · 从你持有的 SS/SSR 里组队、选特殊规则、排轴，再用随机模拟比成功率${wave?'和分数':''}`}</span>
+    ${optWorker&&optWorker!=='loading'?`<button id="opt-stop" type="button">${optOpt.scale==='long'?'暂停':'停止'}</button>`:''}
+    <span class="subtle" id="opt-progress">${optWorker?e(optProgress?optProgressText(optProgress):'准备中…'):`${SCALE_HINT[optOpt.scale]||''} · ${optOpt.fixedTeam?'固定当前六人':optOpt.scale==='long'?'从各稀有度的已持有卡面组队':'从已持有的 SS/SSR 组队'}，通过随机重放比较成功率${wave?'和分数':''}`}</span>
   </div>
   ${optWorker?'<div class="progress"><i></i></div>':''}
 </section>
@@ -187,9 +190,17 @@ export function createPlannerUI(ctx){
     q('#pl-other-toggle').onclick=()=>{showOther=!showOther;mount(host);};
     q('.pl-more').addEventListener('toggle',ev_=>{moreOpen=ev_.target.open;});
     if(q('#opt-run'))q('#opt-run').onclick=()=>runOptimize(host,ev,stage);
-    if(q('#opt-stop'))q('#opt-stop').onclick=()=>{optWorker?.terminate();optWorker=null;optProgress=null;mount(host);};
+    if(q('#opt-stop'))q('#opt-stop').onclick=()=>{optWorker?.terminate();optWorker=null;optProgress=null;
+      if(latestCheckpoint&&optOpt.scale==='long'){
+        const value=latestCheckpoint,P=planner();
+        const settings={...optOpt,scopeKey:value.scopeKey,battleVersion:value.battleVersion,enemyContextKey:value.enemyContextKey};
+        P.lastOptimization={...packOptimizationResult(value.targetKey,value,settings),selected:-1};save();
+      }
+      if(optOpt.scale==='long')notice(latestCheckpoint?'已暂停。已完成轮次和候选已保存；用相同设置再次求解可续搜。':'已暂停，第一轮尚未完成。');
+      mount(host);};
     const setOpt=(id,key,get=x=>x.checked)=>{const el=q(id);if(el)el.onchange=()=>{optOpt[key]=get(el);saveOpt();if(['scale','searchRules','minSuccess','minSuccessBasis','fixedTeam','keepLoadout'].includes(key))mount(host);};};
     setOpt('#opt-scale','scale',x=>x.value);setOpt('#opt-goal','goal',x=>x.value);setOpt('#opt-max-turns','maxTurns',x=>Math.max(1,Math.min(30,Math.trunc(Number(x.value)||6))));
+    setOpt('#opt-duration','longMinutes',x=>longMinutes(x.value));
     setOpt('#opt-element','teamElement',x=>x.value);setOpt('#opt-top','top',x=>Number(x.value));
     setOpt('#opt-min-success','minSuccess',x=>Math.max(0,Math.min(100,Number(x.value)||0))/100);
     setOpt('#opt-success-basis','minSuccessBasis',x=>x.value);
@@ -237,14 +248,14 @@ export function createPlannerUI(ctx){
   let lastDesignEnv=null;
 
   // ---------------------------------------------------------------- 求最佳轴（配置优化：队伍 / 规则 / 技能 / 饰品 / 战术卡 + 排轴）
-  let cachePool=null,optWorker=null,optProgress=null,optResult=null,optResultKey='';
+  let cachePool=null,optWorker=null,optProgress=null,optResult=null,optResultKey='',latestCheckpoint=null;
   const OPT_SCALE=SEARCH_PRESETS;
-  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,keepLoadout:true,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10,minSuccess:0,minSuccessBasis:'onPlan'};
+  const optOpt={maxTurns:6,scale:'standard',longMinutes:60,broad:true,fixedTeam:false,keepLoadout:true,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10,minSuccess:0,minSuccessBasis:'onPlan'};
   const GOALS={score:'最高分（通关均分）',stable:'最稳（成功率优先）',fast:'最少回合'};
   const optStepLabel={evaluate:'评估候选',evolve:'改进候选',final:'深排与少量随机模拟',incumbent:'复评已有方案'};
-  const optProgressText=x=>`${optStepLabel[x.step]||x.step}${x.total>0?` ${Math.max(0,Math.min(x.total,x.done))}/${x.total}${x.step==='evolve'?' 次评估':''}`:''} · ${x.label} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
+  const optProgressText=x=>`${x.pass?`第 ${x.pass} 轮 · ${x.passName}`:(optStepLabel[x.step]||x.step)}${x.total>0?` ${Math.max(0,Math.min(x.total,x.done))}/${x.total}`:''} · ${x.label}${Number.isFinite(x.best)?` · 搜索均分 ${n(Math.round(x.best))}`:''} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
   const pct=x=>x==null?'—':`${Math.round(x*100)}%`;
-  function saveOpt(){const P=planner();P.optSettings={scale:optOpt.scale,goal:optOpt.goal,fixedTeam:optOpt.fixedTeam,keepLoadout:optOpt.keepLoadout,maxTurns:optOpt.maxTurns,searchRules:optOpt.searchRules,allOrbs:optOpt.allOrbs,optimizeCards:optOpt.optimizeCards,overkill:optOpt.overkill,...normalizeResultSettings(optOpt)};save();}
+  function saveOpt(){const P=planner();P.optSettings={scale:optOpt.scale,longMinutes:optOpt.longMinutes,goal:optOpt.goal,fixedTeam:optOpt.fixedTeam,keepLoadout:optOpt.keepLoadout,maxTurns:optOpt.maxTurns,searchRules:optOpt.searchRules,allOrbs:optOpt.allOrbs,optimizeCards:optOpt.optimizeCards,overkill:optOpt.overkill,...normalizeResultSettings(optOpt)};save();}
   function resultsFor(key){return optResultKey===key&&optResult?optResult:(planner().lastOptimization?.targetKey===key?planner().lastOptimization:null);}
   const goalFor=ev=>ev.kind==='wave'||optOpt.goal!=='score'?optOpt.goal:'stable';
 
@@ -253,7 +264,6 @@ export function createPlannerUI(ctx){
     const wave=ev.kind==='wave',rules=(ev.kind==='scoreAttack'||wave)?ev.rules||[]:[];
     const goal=goalFor(ev);
     return `<div class="field-grid three">
-  <label>搜索投入<select id="opt-scale" ${optWorker?'disabled':''}>${Object.entries(OPT_SCALE).map(([k,v])=>`<option value="${k}" ${optOpt.scale===k?'selected':''}>${v.label} · 最多 ${v.searchEvals} 次改进</option>`).join('')}</select></label>
   <label>每阶段最多普通回合<input id="opt-max-turns" type="number" min="1" max="30" step="1" value="${optOpt.maxTurns}" ${optWorker?'disabled':''}></label>
   <label>以什么为准<select id="opt-goal" ${optWorker?'disabled':''}>${Object.entries(GOALS).filter(([k])=>wave||k!=='score').map(([k,v])=>`<option value="${k}" ${goal===k?'selected':''}>${v}</option>`).join('')}</select></label>
 </div>
@@ -266,7 +276,7 @@ export function createPlannerUI(ctx){
 </div>
 ${rules.length?`<div class="pl-rules"><p class="subtle compact">${optOpt.searchRules?'自动选时，下面勾的规则是起点；':'不自动选时，按下面勾的规则求解；'}每期可选 ${ev.maxRules||1} 条，已选 ${sel.rules.length}。</p>
 ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-rule="${r.id}" ${sel.rules.includes(r.id)?'checked':''}>${e(r.name)} <span class="tag">+${r.grade}%</span> <small class="subtle">${e(r.parts.map(p=>p.skillType).join('、')||r.type)}</small></label>`).join('')}</div>`:''}
-<p class="subtle compact">固定搜索量，耗时随队伍和关卡变化；提高搜索投入会尝试更多候选并加宽排轴搜索。已有方案会重新评估并保留参选。精评每条轴 ${OPT_SCALE[optOpt.scale].mcRuns} 次随机模拟，均分只计通关样本，失败率单独统计。</p>
+<p class="subtle compact">${optOpt.scale==='long'?'每轮完成后在此浏览器保存进度。使用相同库存和搜索设置可续搜。到时完成当前轮，再用独立样本复核入围候选。':`最多尝试 ${OPT_SCALE[optOpt.scale].searchEvals} 次改进，精评每条轴 ${OPT_SCALE[optOpt.scale].mcRuns} 次。`}均分只计通关样本，失败率单独统计。</p>
 <p class="subtle compact">不固定配队时，候选包括当前配队、游戏里的 6 人编队、同角色换卡面，以及从全部已持有 SS/SSR 组的新队，再按模拟里的贡献换人、交叉、换耳环。技能按格数上限保留排轴实际用到的；成功率来自随机模拟（逐段暴击、伤害浮动、敌方随机目标）。${wave?`战术卡每次 3 选 1、可重抽 5 次，指定一张出现的概率约 ${Math.round(cardSeenProb(1)*100)}%。`:''}</p>`;
   }
 
@@ -285,13 +295,19 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
     const summaryStale=summary&&(partyChanged||!resultMatchesEnemies(summary,contextKey)||!sameRuleIds(summary.ruleIds,activeRules));
     const rows=resultStale?[]:visibleCandidates(R,optOpt),basisName=optOpt.minSuccessBasis==='success'?'通关率（含续打）':'照轴完成率';
     const maxScore=rows.length?Math.max(...rows.map(({candidate:t})=>successfulScores(t.mc).mean??0)):0;
+    const long=R?.longSearch;
+    const moveNames={equipment:'饰品',support:'支援卡',booster:'增幅器',chip:'芯片',swap:'单位置换人或卡面',swap2:'换两位',front:'前后卫',cross:'交叉组队',rule:'规则',synergy:'技能配合组队'};
+    const explored=Object.entries(long?.moves||{}).filter(([k])=>moveNames[k]).map(([k,v])=>moveNames[k]+' '+n(v)).join('、');
+    const effort=long?.axisEdits||long?.expandedStates?`，试过 ${n(long.axisEdits||0)} 个排轴改法，展开 ${n(long.expandedStates||0)} 个行动分支`:'';
+    const longNote=long&&!resultStale?`<p class="subtle compact">已完成 ${long.rounds} 轮${effort} · ${long.validated?'已用独立样本复核':'搜索中间结果'}${explored?`。已评估的改动次数：${e(explored)}`:''}。${wave&&long.ceiling?`本关计分公式上限 ${n(long.ceiling)} 分（每阶段一回合、伤害分封顶）${maxScore>0?`，最高通关样本均分距上限 ${n(Math.round(Math.max(0,long.ceiling-maxScore)))} 分`:''}。该上限未考虑阵容可达性。`:''}</p>`:'';
     const legacyScores=wave&&R?.top?.some(t=>successfulScores(t.mc).converted);
     const thresholdNote=R&&optOpt.minSuccess>0?`<p class="subtle compact">按${basisName} ≥ ${pct(optOpt.minSuccess)} 筛选，当前保留 ${rows.length} 个候选${R.rejectedBySuccess?`；搜索结束时另有 ${R.rejectedBySuccess} 条轴未达到当时下限`:''}。${rows.length?'':'可降低下限或提高搜索投入后重新搜索。'}</p>`:'';
     const attempt=!resultStale&&R?.attempt;
     const failedAttempt=attempt&&(!rows.length||!rows.some(x=>x.candidate.mc.success>0));
     const failureText=failedAttempt?`<p class="subtle compact">本次复评的参考轴在期望伤害下清了 ${attempt.cleared}/${attempt.phases} 个阶段。随机重放 ${attempt.mc.n} 次，照轴完成 ${pct(attempt.mc.onPlan)}，含续打通关 ${pct(attempt.mc.success)}。${Object.entries(attempt.mc.fails||{}).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([reason,count])=>e(reason)+' '+count+' 次').join('，')}</p>`:'';
     const currentBelow=!summaryStale&&summary&&optOpt.minSuccess>0&&!(satisfiesThreshold(summary,optOpt))?`<p class="pill-error">当前采用方案低于所选成功率下限。可从合格候选中重新选择，或重新搜索。</p>`:'';
-    const staleNote=resultStale||summaryStale?'<p class="pill-error">配队、排轴或计算条件已变更，旧均分和成功率暂不作为有效结果。重新搜索可按当前配置复评。</p>':'';
+    const staleNote=resultStale?'<p class="pill-error">候选使用了旧的战斗参数。重新搜索可按当前参数复评。</p>':
+      summaryStale?'<p class="subtle compact">当前采用的轴或配置已变更，其旧评分已隐藏。</p>':'';
     const chips=rows.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${rows.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
     <div class="pl-plans">${rows.map(({candidate:t,index:i})=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
       <b>候选 ${i+1}${i===selected?' · 已采用':''}</b>${t.newTeam?'<span class="tag">新队伍</span>':''}<span>按轴 ${pct(t.mc.onPlan)} · 通关 ${pct(t.mc.success)}</span><span>失败 ${sc.successes==null||t.mc.n==null?'—':t.mc.n-sc.successes}/${t.mc.n??'?'} 次</span>${wave?`<span>${sc.mean!=null?`通关均分 ${n(Math.round(sc.mean))} · ${sc.samples??'?'} 个成功样本${gap>=0.5?` · 距最高 ${n(Math.round(gap))}`:''}`:'暂无通关分数'}</span>`:''}<span>${t.mc.turnsMedian??t.turns} 回合${t.teamElement?` · ${ELEM_LABEL[t.teamElement]||t.teamElement} ${pct(t.elementShare)}`:''}</span></button>`;}).join('')}</div>${legacyScores?'<p class="subtle compact">旧均分已剔除失败的零分；重新搜索会用新样本复评已有轴并更新排序。</p>':''}`:'';
@@ -320,10 +336,10 @@ ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p clas
     </div>`:sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
     return `<div class="split-heading"><h2 title="${e(s.label||'')}">当前方案${summary?` <small class="subtle">${s.newTeam?'新组的队伍 · ':''}${s.at?new Date(s.at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 求出':''}</small>`:''}</h2>
   ${hasAxis?'<button id="pl-edit" class="quiet" type="button">逐回合修改</button>':''}</div>
-${staleNote}${thresholdNote}${failureText}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
+${staleNote}${longNote}${thresholdNote}${failureText}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
 <div class="pl-axis">${axis}</div>
 ${loadout}
-${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.screened??R.evaluated}），${R.threads??1} 个线程，用时 ${(R.elapsed/1000).toFixed(0)} 秒${(R.errorCount||R.errors?.length)?`；${R.errorCount||R.errors.length} 个候选出错`:''}。启发式搜索不保证全局最优；分数和成功率来自有限样本的社区公式模拟，小分差可能是抽样波动，不是游戏实测。</p>`:''}`;
+${R?`<p class="subtle compact">阵容与配置粗筛 ${n(R.screened??R.evaluated??0)} 次，${R.threads??1} 个线程，用时 ${(R.elapsed/1000).toFixed(0)} 秒${(R.errorCount||R.errors?.length)?`，${R.errorCount||R.errors.length} 个候选出错`:''}。分数和成功率来自有限样本的模拟，小分差可能来自抽样波动。</p>`:''}`;
   }
 
   function satisfiesThreshold(summary,settings){
@@ -347,16 +363,16 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     P.best=P.best||{};P.best[k]={...bestSummary(t,R),partyContextKey:partyContextKey([P.members,P.designs[k]])};
     bestIdx=i;R.selected=i;if(P.lastOptimization?.targetKey===k)P.lastOptimization.selected=i;persist();saveSel();
   }
-  async function ensureCache(){
-    if(cachePool)return true;
-    try{const r=await cacheDecks();decks={list:r.decks,readAt:r.read_at};cachePool={decks:r.decks,cards:r.cards||[],accessories:r.accessories||[]};return true;}
+  async function ensureCache(refresh=false){
+    if(cachePool&&!refresh)return true;
+    try{const r=await cacheDecks();decks={list:r.decks,readAt:r.read_at};cachePool={decks:r.decks,cards:r.cards||[],accessories:r.accessories||[],moduleCounts:r.moduleCounts};return true;}
     catch(err){notice('读取游戏缓存失败：'+err.message+'。求最佳轴需要本机游戏缓存里的已持有卡面和饰品（只读）。',true);return false;}
   }
   async function runOptimize(host,ev,stage){
     if(!ev||!stage){notice('先选期数。');return;}
     if(optWorker)return;
     optWorker='loading';optProgress={step:'evaluate',done:-1,total:0,label:'读取游戏缓存',elapsed:0};mount(host);
-    const ok=await ensureCache();
+    const ok=await ensureCache(optOpt.scale==='long');
     if(!ok){optWorker=null;optProgress=null;mount(host);return;}
     const P=planner();
     // 研究室里还没有完整配队时，先用游戏里当前的编队当起点
@@ -379,19 +395,24 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
         ruleIndex=ruleOptions.findIndex(o=>key(o.rules)===key(c.rules));
       }catch(err){notice('规则组合构建失败，按当前规则计算：'+err.message);ruleOptions=null;}
     }
-    const input={data:{catalog,skills,stats:statsData,equipment},archive:getArchive(),cache:cachePool,base:P.members,
+    const {styles,characters,gameInventory}=getArchive();
+    const input={data:{catalog,skills,stats:statsData,equipment},archive:{styles,characters,gameInventory},cache:cachePool,base:P.members,
       target:{kind:ev.kind,ev:{elements:ev.elements||[]},rules:c.rules,phases:c.phases,cards:d.phases.map(p=>p.card||null),difficulty:ws.difficulty,international:ws.international,ruleOptions,ruleIndex},
       opts:{...optOpt,...OPT_SCALE[optOpt.scale],goal:goalFor(ev),overkill:ws.overkill!==false&&optOpt.overkill}};
     input.opts.scopeKey=optimizationScope(k,input);
     input.opts.battleVersion=BATTLE_MODEL_VERSION;input.opts.enemyContextKey=enemyContextKey(c.phases,contextOptions(ev));
     input.incumbents=reusableCandidates(resultsFor(k),k,input.opts.scopeKey,{members:P.members,design:d,ruleIds:c.rules.map(r=>r.id),label:'当前已有轴'});
-    optResult=null;optResultKey=k;optProgress={step:'evaluate',done:-1,total:0,label:'准备',elapsed:0};
+    latestCheckpoint=null;optResult=null;optResultKey=k;optProgress={step:'evaluate',done:-1,total:0,label:'准备',elapsed:0};
     const w=new Worker('/sim/optimizer-worker.mjs',{type:'module'});optWorker=w;
+    const decorate=r=>({...r,targetKey:k,scopeKey:input.opts.scopeKey,battleVersion:input.opts.battleVersion,enemyContextKey:input.opts.enemyContextKey,teamElement:input.opts.teamElement,selected:-1});
     w.onmessage=m=>{const x=m.data;
-      if(x.stage==='progress'){optProgress=x;const el=host.querySelector('#opt-progress');if(el)el.textContent=optProgressText(x);}
+      if(optWorker!==w)return;
+      if(x.stage==='checkpoint'){latestCheckpoint=decorate(x.result);optResult=latestCheckpoint;bestIdx=-1;
+        mount(host);}
+      else if(x.stage==='progress'){optProgress=x;const el=host.querySelector('#opt-progress');if(el)el.textContent=optProgressText(x);}
       else{
         w.terminate();optWorker=null;optProgress=null;
-        if(x.stage==='done'){optResult={...x.result,targetKey:k,scopeKey:input.opts.scopeKey,battleVersion:input.opts.battleVersion,enemyContextKey:input.opts.enemyContextKey,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
+        if(x.stage==='done'){optResult={...decorate(x.result),selected:0};bestIdx=0;
           const current=planner();current.lastOptimization=packOptimizationResult(k,optResult,input.opts);
           if(optResult?.top?.length){
             if(!optResult.top.some(t=>t.mc.success>0)){optResult.selected=-1;current.lastOptimization.selected=-1;save();notice('本次候选在随机重放中均未通关。保留了当前轴，可点选候选查看卡在哪个阶段。');}
@@ -649,7 +670,7 @@ ${flags.length?`<details><summary>未支持／近似处理的机制（${flags.le
     });
     on('#pl-save','click',()=>{persist();notice('排轴器队伍已保存到档案。');});
     on('#pl-decks','click',async()=>{
-      try{const r=await cacheDecks();decks={list:r.decks,readAt:r.read_at};cachePool={decks:r.decks,cards:r.cards||[],accessories:r.accessories||[]};}catch(err){decks={error:'读取游戏编队失败：'+err.message};}
+      try{const r=await cacheDecks();decks={list:r.decks,readAt:r.read_at};cachePool={decks:r.decks,cards:r.cards||[],accessories:r.accessories||[],moduleCounts:r.moduleCounts};}catch(err){decks={error:'读取游戏编队失败：'+err.message};}
       mount(host);
     });
     on('#pl-deck','change',x=>{selectedDeck=Number(x.target.value);mount(host);});

@@ -141,6 +141,7 @@ test('flexible skill search includes equipped transferable EX and master skills 
 
 test('fixed loadout replays the equipped passive and support resonance and rebuilds historical manual stats from the current team',async()=>{
   const input=transferredSkillFixture();
+  input.data.catalog.styles.find(s=>s.id===input.base[0].styleId).tier='SSR';
   input.opts.keepLoadout=true;
   const effect=(label,rate)=>({label,name:label,timing:'OnBattleStart',parts:[{skillType:'OverDrivePointUp',targetType:'Self',power:[rate,0]}]});
   const offStyle={id:9002,label:'TransferPassive',name:'Transfer passive',restricted:true,passive:effect('FromSkill',0.2)};

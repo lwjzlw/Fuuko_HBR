@@ -10,10 +10,13 @@
 import {buildParty,initialState,cloneState,NORMAL,isOrbSkillId} from './hbr/battle.mjs';
 import {membersFromDeck,skillSlotCap} from './hbr/deck.mjs';
 import {membersFrom} from './party.mjs';
-import {accessorySlot,canEquip,ownedAccessoryOptions} from '../equipment.mjs';
-import {search,replay,carryoverValue} from './search.mjs';
+import {canEquip,ownedAccessoryOptions} from '../equipment.mjs';
+import {accessoryValidator,createLoadoutNeighborhood,gearRollKey as gearKey} from './loadout-neighborhood.mjs';
+import {search,replay,carryoverValue,carryFrontier} from './search.mjs';
 import {simulateDesign,designFromPlan,monteCarlo,emptyTurn,mulberry32} from './designer.mjs';
 import {repairDesign} from './axis-repair.mjs';
+import {refineAxis,transferActorAxis} from './axis-neighborhood.mjs';
+import {synergyTeams} from './team-seeds.mjs';
 import {applyCard,relevantCards,cardById,encounterCardSets} from './cards.mjs';
 import {waveScore,waveRoundScore} from '../boss-model.mjs';
 import {normalizeTeamElement,normalizeMinSuccess,normalizeSuccessBasis,resultLimit,rawIdentity,candidateIdentity,attackElements,elementSummary,searchBudget} from './optimizer-options.mjs';
@@ -51,10 +54,14 @@ export async function optimize(input,onProgress=()=>{},runner=null){
 /** 同线程执行（测试 / 不支持嵌套 Worker 时的回退）。 */
 export function inlineRunner(S){return {size:1,run:task=>Promise.resolve().then(()=>S.handle(task)),close(){}};}
 /** 子 Worker 用：建立一份只用于计算的上下文，返回任务处理函数。 */
-export function createTaskHandler(input){const S=setup(input,()=>{});return task=>S.handle(task);}
+export function createTaskHandler(input){const S=setup(input,()=>{},true);return task=>S.handle(task);}
 
-function setup(input,onProgress=()=>{}){
-  const {data,archive,cache,base,target,opts}=input;
+function setup(input,onProgress=()=>{},taskOnly=false){
+  const {data,archive,cache,target,opts}=input;
+  const shifts=new Map((cache.cards||[]).filter(c=>typeof c.card?.resonanceShift==='boolean').map(c=>[c.styleId,c.card.resonanceShift]));
+  const currentCard=raw=>raw&&shifts.has(raw.styleId)&&raw.card?.resonanceShift!==shifts.get(raw.styleId)
+    ?{...raw,card:{...raw.card,resonanceShift:shifts.get(raw.styleId)}}:raw;
+  const base=input.base.map(m=>({...m,raw:currentCard(m.raw)}));
   const {catalog,skills,stats,equipment}=data;
   const t0=Date.now();
   const styleById=new Map(catalog.styles.map(s=>[s.id,s]));
@@ -74,6 +81,7 @@ function setup(input,onProgress=()=>{}){
   const goal=opts.goal||(isWave?'score':'stable');
   const teamElement=normalizeTeamElement(opts.teamElement),topLimit=resultLimit(opts.top);
   const minSuccess=normalizeMinSuccess(opts.minSuccess);
+  const searchThreshold=normalizeMinSuccess(opts.searchThreshold??minSuccess);
   const minSuccessBasis=normalizeSuccessBasis(opts.minSuccessBasis);
   const keepLoadout=!!opts.fixedTeam&&!!opts.keepLoadout;
   const userCards=(target.cards||[]).some(Boolean)?target.cards:null;
@@ -90,55 +98,25 @@ function setup(input,onProgress=()=>{}){
 
   // ---------------------------------------------------------------- 候选
   // 旧编队没有实例 ID，用主数据 ID、强化和词条核对库存数量。
-  const gearKey=a=>JSON.stringify([Number(a.masterId),a.plus||0,a.main||[],a.expansion||[]]);
-  const inventoryCount=new Map(),inventoryIds=new Map(),legacyCount=new Map();
-  for(const a of cache.accessories||[]){
-    const key=gearKey(a);
-    if(a.instanceId!=null){
-      const id=String(a.instanceId);if(inventoryIds.has(id))continue;
-      inventoryIds.set(id,key);
-    }else legacyCount.set(key,(legacyCount.get(key)||0)+1);
-    inventoryCount.set(key,(inventoryCount.get(key)||0)+1);
-  }
-  function legalEquipment(raws){
-    const used=new Map(),usedIds=new Set(),legacyUsed=new Map();
-    for(const raw of raws)for(const [slot,a] of Object.entries(raw.accessories||{})){
-      if(!a)continue;
-      const entry=byEq.get(Number(a.masterId)),expected=accessorySlot(entry);
-      const member={styleId:raw.styleId,characterId:styleById.get(raw.styleId)?.characterId};
-      if(entry&&(!canEquip(entry,member)||(expected&&expected!=='other'&&expected!==slot)))return false;
-      const key=gearKey(a);
-      if(a.instanceId!=null){
-        const id=String(a.instanceId);if(usedIds.has(id))return false;
-        usedIds.add(id);
-        if(inventoryCount.size&&inventoryIds.get(id)!==key){
-          if(inventoryIds.has(id))return false;
-          const n=(legacyUsed.get(key)||0)+1;if(n>(legacyCount.get(key)||0))return false;
-          legacyUsed.set(key,n);
-        }
-      }
-      if(!inventoryCount.size)continue;
-      const count=(used.get(key)||0)+1;
-      if(count>(inventoryCount.get(key)||0))return false;
-      used.set(key,count);
-    }
-    return true;
-  }
-  const cands=[];const seen=new Set();
+  const baseRaws=base.map(m=>m.raw).filter(Boolean);
+  const loadoutNeighborhood=opts.longSearch?createLoadoutNeighborhood({data,cache,baseRaws,archive}):null;
+  const legalEquipment=loadoutNeighborhood?.valid||accessoryValidator(cache.accessories,byEq,styleById);
+  const cands=[];const seen=new Map();
+  const seedTeams=!taskOnly&&(!opts.longPassKind||opts.longPassKind==='explore');
   const valid=raws=>{
     if(raws.length!==6||raws.some(r=>!r?.styleId||!styleById.has(r.styleId)))return false;
     const chars=raws.map(r=>styleById.get(r.styleId).characterId);
     if(new Set(chars).size!==6)return false;
     return raws.filter(r=>roleOf(r.styleId)==='Admiral').length<=1;
   };
-  const add=(label,raws,front,origin,rule=ruleBase,lockedSkills=null,reserve=false)=>{
+  const add=(label,raws,front,origin,rule=ruleBase,lockedSkills=null,reserve=false,reuse=false)=>{
+    if(loadoutNeighborhood&&['swap','random','evolve','synergy'].includes(origin)&&!keepLoadout)raws=loadoutNeighborhood.repairSupports(raws);
     if(!valid(raws)||!legalEquipment(raws))return null;
     if(lockedSkills&&lockedSkills.some((ids,i)=>!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.length>skillSlotCap(raws[i],roleOf(raws[i].styleId))))return null;
-    const k=JSON.stringify([candidateIdentity(raws,front,rule),lockedSkills]);if(seen.has(k))return null;seen.add(k);
-    const c={label,raws,front:front||raws.map((_,i)=>i<3),origin,rule,lockedSkills,reserve};cands.push(c);return c;
+    const k=JSON.stringify([candidateIdentity(raws,front,rule),lockedSkills]);if(seen.has(k))return reuse?seen.get(k):null;
+    const c={label,raws,front:front||raws.map((_,i)=>i<3),origin,rule,lockedSkills,reserve};seen.set(k,c);cands.push(c);return c;
   };
   const decks=(cache.decks||[]).filter(d=>d.members.filter(Boolean).length===6);
-  const baseRaws=base.map(m=>m.raw).filter(Boolean);
   const baseOk=baseRaws.length===6&&base.every(m=>m.raw.styleId===m.styleId);
   if(opts.fixedTeam&&!baseOk)throw Error('固定配队搜索需要六人的完整装备信息。请先导入要核对的游戏编队。');
   const equippedIds=m=>m.strictDeckSkills||m.deckSkillIds?.length?m.deckSkillIds||[]:m.raw.skillIds||[];
@@ -148,16 +126,19 @@ function setup(input,onProgress=()=>{}){
   const incumbentRule=x=>x.ruleIds==null?ruleBase:ruleOpts.findIndex(r=>sameRules(r.ids,x.ruleIds));
   const ownedStyles=new Set([...(cache.cards||[]).map(c=>c.styleId),...base.map(m=>m.styleId),
     ...decks.flatMap(d=>d.members.map(m=>m.styleId)),...Object.keys(archive?.styles||{}).filter(id=>archive.styles[id].owned)]);
+  const ownedByCharacter=new Map(catalog.characters.map(c=>[c.id,(c.styleIds||[]).filter(id=>ownedStyles.has(id))]));
+  const buildOwnedParty=members=>buildParty(members.map(m=>({...m,extraStyleIds:ownedByCharacter.get(styleById.get(m.styleId)?.characterId)||[]})),{skills,catalog,stats});
   /** 旧结果只提供配置与轴；重新派生面板/饰品/支援效果并验证本次的约束，不能作为绕过入口。 */
   function normalizeIncumbent(x){
     if(x?.members?.length!==6||x.design?.phases?.length!==nPhases||incumbentRule(x)<0)return null;
+    if(opts.searchRules===false&&incumbentRule(x)!==ruleBase)return null;
     if(!valid(x.members.map(m=>m.raw))||x.members.some(m=>m.styleId!==m.raw.styleId||!ownedStyles.has(m.styleId)))return null;
     if(opts.fixedTeam&&x.members.some((m,i)=>m.styleId!==base[i]?.styleId))return null;
     if(x.members.filter(m=>m.front).length!==3)return null;
     const cards=x.design.phases.map(p=>p.card||null);
     if(cards[0]||cards.some(c=>c&&!cardById(c))||new Set(cards.filter(Boolean)).size!==cards.filter(Boolean).length)return null;
     if(opts.optimizeCards===false&&cards.some((c,p)=>c!==(p>0?target.cards?.[p]||null:null)))return null;
-    const raws=x.members.map(m=>structuredClone(m.raw));
+    const raws=x.members.map(m=>structuredClone(currentCard(m.raw)));
     if(!legalEquipment(raws))return null;
     if(raws.some(r=>r.supportStyleId&&!ownedStyles.has(r.supportStyleId)))return null;
     const ms=membersFromDeck({index:-1,name:'',members:raws},{catalog,equipment,stats,previous:keepLoadout?base:x.members});
@@ -176,7 +157,7 @@ function setup(input,onProgress=()=>{}){
       ms[i].front=!!x.members[i].front;ms[i].deckSkillIds=ids.slice();ms[i].strictDeckSkills=!!x.members[i].strictDeckSkills||keepLoadout;ms[i].allOrbSkills=false;
     }
     const converted=membersFrom({members:ms},archive,catalog);if(!converted.ready)return null;
-    const party=buildParty(converted.members,{skills,catalog,stats});
+    const party=buildOwnedParty(converted.members);
     const used=ms.map(()=>new Set());
     for(const p of x.design.phases)for(const t of p.turns||[]){
       const rounds=[t,...(t.odStart?.rounds||[]),...(t.odEnd?.rounds||[])];
@@ -195,7 +176,7 @@ function setup(input,onProgress=()=>{}){
     for(const member of ms)member.strictDeckSkills=true;
     return {...x,members:ms,design:structuredClone(x.design)};
   }
-  const incumbentInputs=(input.incumbents||[]).slice(0,21).map(normalizeIncumbent).filter(Boolean);
+  const incumbentInputs=taskOnly?[]:(input.incumbents||[]).slice(0,21).map(normalizeIncumbent).filter(Boolean);
   // 新成员用的“位置模板”（饰品其余槽、支援卡、宝珠沿用这个位置的）
   const tplRaws=baseOk?baseRaws:(decks.find(d=>d.current)||decks[0])?.members||[];
   /** 保留位置上的通用饰品和支援，移除新卡面无法装备的专属物品。 */
@@ -210,11 +191,14 @@ function setup(input,onProgress=()=>{}){
     }
     // Role labels do not predict the actual job. Keep this slot's earring;
     // mutations explore every available type and let simulated results decide.
-    return {...(tpl||{}),styleId:card.styleId,cardSourceId:card.cardSourceId,characterId:card.characterId,limitBreak:card.limitBreak,tearLevel:card.tearLevel,
-      card:card.card,character:card.character,characterCards:card.characterCards,skillIds:[],latentIds:[],accessories:acc,_new:true,_changes:changes,_earNote:undefined};
+    const recorded=opts.longSearch?decks.flatMap(d=>d.members).find(m=>m.styleId===card.styleId):null;
+    const raw={...(tpl||{}),styleId:card.styleId,cardSourceId:card.cardSourceId,characterId:card.characterId,limitBreak:card.limitBreak,tearLevel:card.tearLevel,
+      card:card.card,character:card.character,characterCards:card.characterCards,skillIds:recorded?.skillIds||[],
+      latentIds:recorded?.latentIds||(opts.longSearch&&tpl?.characterId===card.characterId?tpl.latentIds:[])||[],accessories:acc,_new:true,_changes:changes,_earNote:undefined};
+    return loadoutNeighborhood?loadoutNeighborhood.equipPersonal(raw):raw;
   };
 
-  if(baseOk){
+  if(seedTeams&&baseOk){
     if(!keepLoadout)add('当前队伍',baseRaws,baseFront,'base');
     if(keepLoadout||baseSkills.some(ids=>ids.length)){
       const original=add('当前队伍 · 原配装技能',baseRaws,baseFront,'base',ruleBase,baseSkills,true);
@@ -232,10 +216,10 @@ function setup(input,onProgress=()=>{}){
       if(survival.some((r,i)=>r!==baseRaws[i]))add('当前队伍 · 专属 DP 宝玉',survival,baseFront,'base');
     }
   }
-  if(!keepLoadout)for(const x of incumbentInputs){
+  if(seedTeams&&!keepLoadout)for(const x of incumbentInputs){
     add(x.label||'已有高分方案',x.members.map(m=>m.raw),x.members.map(m=>!!m.front),'incumbent',incumbentRule(x),x.members.map(m=>m.deckSkillIds));
   }
-  if(!keepLoadout)for(const d of decks){
+  if(seedTeams&&!keepLoadout)for(const d of decks){
     const label=`编队 ${d.index}「${d.name}」`;
     const raws=opts.fixedTeam?baseRaws.map(r=>d.members.find(m=>m.styleId===r.styleId)):d.members;
     if(raws.includes(undefined))continue;
@@ -244,7 +228,7 @@ function setup(input,onProgress=()=>{}){
     const ids=raws.map(r=>r.skillIds||[]);
     if(ids.some(s=>s.length))add(label+' · 原配装技能',raws,front,'deck',ruleBase,ids,!!d.current);
   }
-  if(baseOk&&!opts.fixedTeam){
+  if(seedTeams&&baseOk&&!opts.fixedTeam){
     baseRaws.forEach((r,i)=>{
       const alts=(cache.cards||[]).filter(c=>c.characterId===r.characterId&&c.styleId!==r.styleId)
         .sort((a,b)=>(b.limitBreak||0)-(a.limitBreak||0)).slice(0,2);
@@ -260,7 +244,7 @@ function setup(input,onProgress=()=>{}){
 
   // 全新队伍的卡面池：全部已持有 SS/SSR 卡面。不看职能——先验只看属性契合与养成度，
   // 搜索中再按“精英队伍里出现的频率”自适应加权（交叉熵式），让模拟结果决定谁值得上场。
-  const pool=(cache.cards||[]).map(c=>({c,s:styleById.get(c.styleId)})).filter(x=>x.s&&['SS','SSR'].includes(x.s.tier));
+  const pool=(cache.cards||[]).map(c=>({c,s:styleById.get(c.styleId)})).filter(x=>x.s&&(opts.longSearch||['SS','SSR'].includes(x.s.tier)));
   const capability=new Map();
   const elementsOf=c=>{
     if(capability.has(c.styleId))return capability.get(c.styleId);
@@ -305,10 +289,17 @@ function setup(input,onProgress=()=>{}){
     const c=add(`全新队伍 #${randomNo}（${el?el+' 偏向':'不限属性'}起点）`,raws,null,'random',ruleOpts.length>1&&opts.searchRules!==false?Math.floor(rng()*ruleOpts.length):ruleBase);if(c){c.root=c.label;c.rootRaws=raws;c.island=true;}return c;};
   // Fixed-team deck seeds above are reordered to the selected six slots.
   const broad=opts.broad!==false&&!opts.fixedTeam;
-  if(broad){
+  if(seedTeams&&broad){
     const seedsN=opts.randomSeeds??8;
     const els=teamElement?[teamElement]:[...goodEls.slice(0,3),null];
     for(let k=0;k<seedsN;k++)addRandom(els[k%els.length]);
+    if(opts.longSearch){
+      for(const team of synergyTeams(pool,skills,{elements:els,count:4,rng,owned:ownedByCharacter})){
+        const raws=team.cards.map((c,i)=>placeCard(tplRaws[i],c));
+        const c=add('技能配合 · '+name(raws[0].styleId),raws,null,'synergy',ruleBase);
+        if(c){c.root=c.label;c.rootRaws=c.raws;c.island=true;}
+      }
+    }
   }
   for(const c of cands)if(!c.root){c.root=c.label;c.rootRaws=c.raws;}
 
@@ -324,7 +315,7 @@ function setup(input,onProgress=()=>{}){
     const {members,ready,issues}=membersFrom({members:ms},archive,catalog);
     if(!ready)throw Error(issues.join('；'));
     members.forEach((m,i)=>{if(!m.strictDeckSkills)m.exploreSkillIds=raws[i].skillIds||[];});
-    const built={party:buildParty(members,{skills,catalog,stats}),members:ms};
+    const built={party:buildOwnedParty(members),members:ms};
     if(partyCache.size>=128)partyCache.delete(partyCache.keys().next().value);
     partyCache.set(cacheKey,built);return {...built,party:built.party.slice()};
   };
@@ -337,6 +328,7 @@ function setup(input,onProgress=()=>{}){
   const so=(b,quick=false)=>({objective:goal==='score'&&isWave?'waveScore':'minTurns',turnCost,extraTurns:opts.extraTurns??2,maxTurns:opts.maxTurns||6,beam:b,critMode:'expected',allowOd:true,odWindows:['turnStart','turnEnd'],damageNorm:1e6,overkill,teamElement,top:1,trace:false});
   const scoreOf=(res,party)=>isWave?waveScore({damages:res.phases.map(x=>overkill?x.shown??x.damage:x.damage),turns:res.turns,difficulty:diff,rules:RO(party).rules||[],international:intl}).total:null;
 
+  let work=null;
   function phaseSearch(party,cards,beam,p,st,quick,critMode,reserveResources=false){
     let enemies=RO(party).enemies[p],root=st;
     const card=p>0?cards[p]:null;
@@ -345,8 +337,12 @@ function setup(input,onProgress=()=>{}){
       if(nb.borderDown)enemies=enemies.map(e=>({...e,border:Math.max(0,e.border-nb.borderDown)}));
     }
     const ctx={party,enemy:enemies[0],phaseEnemies:nPhases>1||enemies.length>1?enemies:null,statusTypes:skills.statusTypes};
-    const options={...so(beam,quick),critMode,rootState:p>0||ctx.phaseEnemies?root:null,reserveResources};
-    return {ctx,options,result:search(ctx,options)};
+    const longSearch=!!opts.longSearch&&!quick&&(reserveResources||beam>screenBeam);
+    const options={...so(beam,quick),critMode,rootState:p>0||ctx.phaseEnemies?root:null,reserveResources,
+      longSearch,seed:(opts.seed??97)+p,top:reserveResources&&longSearch?3:1};
+    const result=search(ctx,options);
+    if(work){work.phaseSearches++;work.expandedStates+=result.expanded;}
+    return {ctx,options,result};
   }
 
   /** 从第 p0 阶段（该阶段选卡前的状态 st0）起串联搜索到最后。返回各阶段计划与选卡前状态。 */
@@ -386,6 +382,12 @@ function setup(input,onProgress=()=>{}){
       }
       if(!next.length)return [...new Set([greedyStop,...stopped].filter(Boolean))];
       if(p+1===nPhases)return [...next.map(x=>x.plans),...(greedyStop?[greedyStop]:[])];
+      if(opts.longSearch){
+        paths=carryFrontier(next,x=>x.st,x=>x.score,{seed:(opts.seed??97)+p,limit:5});
+        const greedy=next.find(x=>x.greedy);
+        if(greedy&&!paths.includes(greedy))paths.push(greedy);
+        continue;
+      }
       const byScore=next.slice().sort((a,b)=>b.score-a.score||b.resources-a.resources)[0];
       const byResources=next.slice().sort((a,b)=>b.resources-a.resources||b.score-a.score)[0];
       const greedy=next.find(x=>x.greedy);
@@ -439,6 +441,18 @@ function setup(input,onProgress=()=>{}){
       const actives=[...used[i]].sort((a,b)=>b[1]-a[1]).map(([id])=>id).filter(id=>!extras.includes(id));
       if(actives.length>room)need=true;
       const pick=actives.slice(0,room);
+      // A spare slot can change a later phase. Keep the skills the current
+      // axis actually calls, then rotate an untried active/passive into a
+      // spare slot on long-search batches before applying the usual fill.
+      const skillSeed=(opts.seed??97)>>>0;
+      if(opts.longSearch&&pick.length<room&&(skillSeed+i)%3!==0){
+        const available=[...new Set(u.skills.filter(s=>s.id>0&&!/CommandBuff$/.test(s.label||'')&&
+          !extras.includes(s.id)&&!pick.includes(s.id)).map(s=>s.id))];
+        if(available.length){
+          const sample=mulberry32((skillSeed+Math.imul(i+1,0x9e3779b9))>>>0);
+          pick.push(available[Math.floor(sample()*available.length)]);
+        }
+      }
       // 原编队装备过的、价值高的通用被动优先；再按价值补
       const passives=u.skills.filter(s=>s.passive&&s.id>0&&!extras.includes(s.id)&&!pick.includes(s.id))
         .map(s=>({s,v:((s.passive.parts?.length?s.passive.parts:s.parts)||[]).reduce((a,p)=>a+(PASSIVE_VALUE[p.skillType]||0),0)+((raw.skillIds||[]).includes(s.id)?0.5:0)}))
@@ -498,7 +512,12 @@ function setup(input,onProgress=()=>{}){
   let elites=[];
   const refreshElites=()=>{
     sortRes(results);elites=[];const seenT=new Set();
-    for(const r of results){const k=teamKey(r);if(seenT.has(k))continue;seenT.add(k);elites.push(r);if(elites.length>=ELITE)break;}
+    const teamQuota=opts.longSearch?Math.ceil(ELITE/2):ELITE;
+    for(const r of results){const k=teamKey(r);if(seenT.has(k))continue;seenT.add(k);elites.push(r);if(elites.length>=teamQuota)break;}
+    if(opts.longSearch){
+      for(const r of results){if(elites.length>=ELITE)break;if(!elites.includes(r))elites.push(r);}
+      sortRes(elites);
+    }
     // 自适应采样权重：卡面在精英队伍里出现的比例（名次越前权重越大）
     for(const x of pool)x.elite=0;
     const byStyle=new Map(pool.map(x=>[x.c.styleId,x]));
@@ -518,6 +537,7 @@ function setup(input,onProgress=()=>{}){
     key:r.key,contrib:r.contrib,slots:r.slots,screenOnly:r.screenOnly,score:r.score,turns:r.turns,cleared:r.cleared,failed:r.failed,invalid:r.invalid,damage:r.damage,robust:r.robust,elementMatch:r.elementMatch});
   /** eval：粗筛 → 若不比 worst（当前第 ELITE 名的排名键）差，再补完。final：入围方案挑战术卡 + 蒙特卡洛。 */
   function handle(task){
+    work=opts.longSearch?{phaseSearches:0,expandedStates:0,axisEdits:0}:null;
     const e0=errors.length;
     let out=null;
     if(task.type==='eval'){
@@ -529,10 +549,17 @@ function setup(input,onProgress=()=>{}){
       }
     }else if(task.type==='final')out=safe(()=>finalize(task.f,task.fi),task.f.label);
     else if(task.type==='incumbent')out=safe(()=>rateIncumbent(task.incumbent,task.repair),task.incumbent.label||'已有方案');
-    return {r:out,errors:errors.splice(e0)};
+    return {r:out,errors:errors.splice(e0),...(work?{work}:{})};
   }
 
   /** 入围方案：（粗筛结果先补完，完整结果按已挑技能重建）→ 逐阶段挑战术卡 → 宽束重排 → 蒙特卡洛。 */
+  function neighborsOf(party,v,salt=0){
+    const result=refineAxis(v.sctx,v.design,{seed:((opts.seed??97)+salt)>>>0,
+      maxTurns:opts.maxTurns||6,limit:opts.axisTrials??72,goal,minSuccess:searchThreshold,basis:minSuccessBasis,teamElement,
+      optimizeCards:isWave&&opts.optimizeCards!==false,scoreOf:isWave?r=>scoreOf(r,party):null});
+    if(work)work.axisEdits+=result.total;
+    return result.designs.map(design=>judgeDesign(party,design));
+  }
   function finalize(f0,fi){
     const beam=opts.beam||6;
     let f;
@@ -584,12 +611,14 @@ function setup(input,onProgress=()=>{}){
         }
       }
     }
-    if(opts.fixedTeam||f.reserve){
+    if(opts.fixedTeam||f.reserve||opts.longSearch&&fi<2){
       // A route planned around critical hits may end stages early or run out of
       // SP in random replay. Search a noncritical route with the same scoring.
       const robustCards=cur.design.phases.map(p=>p.card||null);
-      const plans=isWave&&f.reserve&&nPhases>1
-        ?encounterRoutes(party,robustCards,beam,'none')
+      const longRoutes=opts.longSearch&&(fi<2||f.reserve);
+      const mode=longRoutes&&(opts.seed??97)%2===0?'expected':'none';
+      const plans=isWave&&(f.reserve||longRoutes)&&nPhases>1
+        ?encounterRoutes(party,robustCards,beam,mode)
         :[chain(party,robustCards,beam,0,null,false,'none').plans];
       for(const plan of plans)variants.push({...f,...judge(party,robustCards,plan,MCJ)});
     }
@@ -597,7 +626,7 @@ function setup(input,onProgress=()=>{}){
     const seenDesign=new Set(),rated=[];
     const rate=v=>{
       const key=JSON.stringify(v.design);
-      if(seenDesign.has(key)||!v.elementMatch||v.invalid&&!opts.fixedTeam)return;
+      if(seenDesign.has(key)||!v.elementMatch||v.invalid&&!opts.fixedTeam&&!opts.longSearch)return;
       seenDesign.add(key);
       const mc=monteCarlo(v.sctx,{},v.design,{n:mcRuns,seed:7,scoreOf:isWave?res=>scoreOf(res,party):null});
       rated.push({...v,mc});
@@ -609,6 +638,11 @@ function setup(input,onProgress=()=>{}){
       for(const v of candidates.slice(0,2))for(const design of repairDesign(v.sctx,v.design,{maxTurns:opts.maxTurns||6})){
         rate({...f,...judgeDesign(party,design),repaired:true});
       }
+    }
+    if(opts.longSearch&&rated.length){
+      const parents=rated.filter(v=>v.mc.successes>0).sort((a,b)=>
+        Number(b.mc[minSuccessBasis]>=searchThreshold)-Number(a.mc[minSuccessBasis]>=searchThreshold)||compareFinal(a,b));
+      if(parents[0])for(const v of neighborsOf(party,parents[0],fi))rate({...f,...v,refined:true});
     }
     // A static route can be legal under random damage even when the
     // deterministic expected path reaches an unaffordable instruction.
@@ -632,7 +666,7 @@ function setup(input,onProgress=()=>{}){
         skills:[...sk,...extra],changes:r._changes||[],skillsChanged:!!r._new||JSON.stringify([...(r.skillIds||[])].sort())!==JSON.stringify([...(cur.slots?.[i]?.ids||[])].sort())};
     });
     const ro=RO(party);
-    const publicResult=(v,index)=>({label:v.label+(v.repaired?' · 修正排轴':index?' · 备选排轴':''),origin:v.origin,newTeam:!!v.island,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,cleared:v.cleared,phases:nPhases,failed:v.failed,turns:v.turns,score:v.cleared===nPhases&&!v.failed&&!v.invalid?v.score:null,damage:Math.round(v.damage),robust:v.robust,
+    const publicResult=(v,index)=>({label:v.label+(v.refined?' · 优化排轴':v.repaired?' · 修正排轴':index?' · 备选排轴':''),origin:v.origin,newTeam:!!v.island,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,cleared:v.cleared,phases:nPhases,failed:v.failed,turns:v.turns,score:v.cleared===nPhases&&!v.failed&&!v.invalid?v.score:null,damage:Math.round(v.damage),robust:v.robust,
       teamElement:v.teamElement,elementDamage:v.elementDamage,elementShare:v.elementShare,
       mc:v.mc,mcNoCards,design:v.design,cards:v.design.phases.map(p=>p.card||null),cardRank,loadout,
       members:v.members.map(m=>({...m})),team:party.map(u=>`${u.name}〈${u.styleName}〉`)});
@@ -643,23 +677,33 @@ function setup(input,onProgress=()=>{}){
     x=normalizeIncumbent(x);if(!x)return null;
     const ms=structuredClone(x.members),{members,ready}=membersFrom({members:ms},archive,catalog);
     if(!ready)return null;
-    const party=buildParty(members,{skills,catalog,stats});party._ri=incumbentRule(x);
+    const party=buildOwnedParty(members);party._ri=incumbentRule(x);
     const j=judgeDesign(party,structuredClone(x.design));
-    if(!j.elementMatch||j.invalid&&!opts.fixedTeam)return null;
-    const rate=v=>monteCarlo(v.sctx,{},v.design,{n:opts.mcRuns||32,seed:7,scoreOf:isWave?res=>scoreOf(res,party):null});
+    const replayOnly=opts.longPassKind==='baseline'||opts.longPassKind==='validate';
+    if(!j.elementMatch||j.invalid&&!opts.fixedTeam&&!opts.longSearch&&!replayOnly)return null;
+    const rate=v=>monteCarlo(v.sctx,{},v.design,{n:opts.mcRuns||32,seed:opts.mcSeed??7,scoreOf:isWave?res=>scoreOf(res,party):null});
     const mc=rate(j);
     const ro=RO(party);
-    const record=(j,mc,changed)=>({label:(x.label||'已有方案（重新评估）')+(changed?' · 修正排轴':''),origin:'incumbent',newTeam:false,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,
+    const label=(x.label||'已有方案（重新评估）').replace(/(?: · (?:修正排轴|优化排轴|备选排轴))+$/,'');
+    const record=(j,mc,suffix)=>({label:suffix?label+' · '+suffix:x.label||label,origin:'incumbent',newTeam:false,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,
       cleared:j.cleared,phases:nPhases,failed:j.failed,turns:j.turns,score:j.cleared===nPhases&&!j.failed&&!j.invalid?j.score:null,damage:Math.round(j.damage),robust:j.robust,
       teamElement:j.teamElement,elementDamage:j.elementDamage,elementShare:j.elementShare,mc,mcNoCards:null,design:j.design,cards:j.design.phases.map(p=>p.card||null),cardRank:[],
       loadout:party.map((u,i)=>({name:`${u.name}〈${u.styleName}〉`,front:!!ms[i].front,isNew:false,cap:skillSlotCap(ms[i].raw,u.role),skills:equippedSkillNames(u,ms[i].deckSkillIds),changes:[],skillsChanged:false})),
       members:ms,team:party.map(u=>`${u.name}〈${u.styleName}〉`)});
     const out=!j.invalid||mc.successes?[record(j,mc,false)]:[];
+    if(replayOnly)return out[0]||null;
     if(repair&&opts.fixedTeam&&nPhases>1&&mc.onPlan<0.8&&j.cleared>=Math.max(1,nPhases-2)){
       for(const design of repairDesign(j.sctx,j.design,{maxTurns:opts.maxTurns||6})){
         const revised=judgeDesign(party,design);if(!revised.elementMatch)continue;
         const stats=rate(revised);
-        if(!revised.invalid||stats.successes)out.push(record(revised,stats,true));
+        if(!revised.invalid||stats.successes)out.push(record(revised,stats,'修正排轴'));
+      }
+    }
+    if(opts.longSearch&&!x.longTransfer&&mc.successes){
+      for(const revised of neighborsOf(party,j)){
+        if(!revised.elementMatch)continue;
+        const stats=rate(revised);
+        if(stats.successes)out.push(record(revised,stats,'优化排轴'));
       }
     }
     out.sort(compareFinal);
@@ -675,6 +719,12 @@ function setup(input,onProgress=()=>{}){
   async function coordinate(runner){
   const lanes=Math.max(1,runner.size||1);
   const budget=searchBudget(opts);
+  const longKind=opts.longSearch?(opts.longPassKind||'explore'):null;
+  const replayOnly=longKind&&longKind!=='explore';
+  const moves={};
+  const totals={phaseSearches:0,expandedStates:0,axisEdits:0};
+  const addWork=m=>{if(m?.work)for(const k of Object.keys(totals))totals[k]+=m.work[k]||0;};
+  const countMove=kind=>{moves[kind]=(moves[kind]||0)+1;};
   /** 同一批次使用同一筛选门槛，结果按提交顺序归并，完成先后不影响后续采样。 */
   const submitBatch=async list=>{
     const worst=elites.length>=ELITE?elites[ELITE-1].key:null;
@@ -683,22 +733,53 @@ function setup(input,onProgress=()=>{}){
       return runner.run(task).catch(err=>({errors:[{label:c.label,error:String(err?.message||err)}]}));
     }));
     for(const m of settled){
+      addWork(m);
       errors.push(...(m?.errors||[]));
       const r=m?.r;if(!r)continue;
       screened++;
+      if(opts.longSearch)countMove(r.kind||r.origin);
       if(!r.screenOnly){promoted++;results.push(r);}
       pushIsland(r);
     }
     refreshElites();
   };
   // 种子也按固定批次归并；批大小独立于硬件并发数。
-  {const list=cands.slice();
+  {let list=replayOnly?[]:cands.slice();
+    if(longKind==='explore'){
+      // Visit a different slice of the recorded teams/rules at each restart.
+      // Preserve the incumbent and leave room for genuinely new parties.
+      const keep=[...list.filter(c=>c.origin==='base').slice(0,2),...list.filter(c=>c.origin==='incumbent').slice(0,3)];
+      const sample=values=>{
+        const copy=values.slice();
+        for(let j=copy.length-1;j>0;j--){const i=Math.floor(rng()*(j+1));[copy[i],copy[j]]=[copy[j],copy[i]];}
+        return copy.slice(0,Math.max(2,budget.batch));
+      };
+      const singleSwaps=[];
+      if(broad){
+        const parent=incumbentInputs[0],raws=parent?.members.map(m=>m.raw)||(baseOk?baseRaws:tplRaws);
+        if(raws.length===6){
+          const front=parent?.members.map(m=>m.front)||(baseOk?baseFront:raws.map((_,i)=>i<3));
+          const rule=parent?incumbentRule(parent):ruleBase,round=Math.floor((opts.longPassIndex||0)/3);
+          for(let pos=0;pos<6;pos++){
+            const choices=optionsFor(raws,pos).sort((a,b)=>Number(b.c.characterId===raws[pos].characterId)-Number(a.c.characterId===raws[pos].characterId)||a.c.styleId.localeCompare(b.c.styleId));
+            for(let j=0;j<Math.min(2,choices.length);j++){
+              const next=raws.slice(),card=choices[(round*2+j)%choices.length].c;
+              next[pos]=placeCard(next[pos],card);
+              const c=add(`第 ${pos+1} 位换 ${name(card.styleId)}`,next,front,'swap',rule,null,false,true);
+              if(c){c.kind='swap';c.root=parent?.label||'当前队伍';c.rootRaws=raws;singleSwaps.push(c);}
+            }
+          }
+        }
+      }
+      list=[...new Set([...keep,...list.filter(c=>c.origin==='synergy'),...singleSwaps,
+        ...sample(list.filter(c=>c.origin!=='random'&&c.origin!=='synergy')),...sample(list.filter(c=>c.origin==='random'))])];
+    }
     for(let i=0;i<list.length;i+=budget.batch){const batch=list.slice(i,i+budget.batch);await submitBatch(batch);progress('evaluate',i+batch.length,list.length,batch.at(-1).label);}}
 
   // ---------------------------------------------------------------- 进化搜索（不按职能配队）
   // 变异：按实际贡献挑最闲的位置换人（主）、一次换两人、与另一支精英队交叉、换耳环；
   // 多次没有进步就注入一支随机新队。按完成的候选数结束，机器负载不改变搜索覆盖。
-  const maxIter=opts.fixedTeam?Math.min(budget.evaluations,Math.max(12,(opts.finalists||12)*2)):broad?budget.evaluations:0;
+  const maxIter=replayOnly?0:longKind&&(opts.fixedTeam||broad)?budget.evaluations:opts.fixedTeam?Math.min(budget.evaluations,Math.max(12,(opts.finalists||12)*2)):broad?budget.evaluations:0;
   const labelOf=(root,rootRaws,raws,isl)=>{
     if(isl)return root.replace(/（.*）$/,''); // 全新队伍：起点只是随机种子，阵容看成员列表
     const before=new Set(rootRaws.map(r=>r.styleId)),after=new Set(raws.map(r=>r.styleId));
@@ -752,7 +833,11 @@ function setup(input,onProgress=()=>{}){
     return false;
   }
   function rearrange(raws,front,withGear){
-    if(withGear&&rng()<0.7){
+    if(withGear&&loadoutNeighborhood&&rng()<0.88){
+      const next=loadoutNeighborhood.propose(raws,rng);
+      if(next){raws.splice(0,raws.length,...next.raws);return next.kind;}
+    }
+    if(withGear&&!loadoutNeighborhood&&rng()<0.7){
       const possible=raws.map((r,i)=>({i,choices:ownedChanges(r)})).filter(x=>x.choices.length);
       if(possible.length){
         const {i,choices}=possible[Math.floor(rng()*possible.length)],{slot,instance}=choices[Math.floor(rng()*choices.length)];
@@ -774,7 +859,8 @@ function setup(input,onProgress=()=>{}){
       return c;
     }
     const u=rng();let kind;
-    if(u<0.5){kind='swap';if(!replaceAt(raws,lazyIndex(p)))return null;}
+    if(loadoutNeighborhood&&u<0.35){kind=rearrange(raws,front,true);if(!kind)return null;}
+    else if(u<0.5){kind='swap';if(!replaceAt(raws,lazyIndex(p)))return null;}
     else if(u<0.68){kind='swap2';const i=lazyIndex(p);let j=lazyIndex(p);if(j===i)j=(i+1+Math.floor(rng()*5))%6;if(!replaceAt(raws,i)||!replaceAt(raws,j))return null;}
     else if(ruleOpts.length>1&&opts.searchRules!==false&&u<0.78){kind='rule';
       let ri=Math.floor(rng()*(ruleOpts.length-1));if(ri>=(p.rule??ruleBase))ri++;
@@ -815,7 +901,7 @@ function setup(input,onProgress=()=>{}){
 
   // ---------------------------------------------------------------- 入围：挑战术卡 + 宽搜索重排 + 蒙特卡洛
   // 入围按评价排序，保留同队不同规则/配装/开场前卫；不以阵容相似为由删掉次高分。
-  const finalistLimit=Math.max(topLimit,Math.min(48,opts.finalists||12));
+  const finalistLimit=opts.longSearch?Math.max(1,Math.min(48,opts.finalists||4)):Math.max(topLimit,Math.min(48,opts.finalists||12));
   const finalists=[];const seenFinalist=new Map();
   for(const r of results){if(teamElement&&!r.elementMatch)continue;
     const k=JSON.stringify([candidateIdentity(r.raws,r.front,r.rule),r.raws.map(x=>x._skills)]);
@@ -834,23 +920,94 @@ function setup(input,onProgress=()=>{}){
   }
   let fdone=0;
   const tasks=[...finalists.map((f,fi)=>({type:'final',f,fi})),...incumbentInputs.map((incumbent,i)=>({type:'incumbent',incumbent,repair:opts.fixedTeam&&i<2}))];
+  if(longKind==='transfer'&&incumbentInputs.length&&!keepLoadout){
+    // Test the same executable axis with changed inventory. A strong known
+    // route need not be rediscovered by a beam before a loadout can compete.
+    tasks.length=0;
+    const seenMoves=new Set();
+    const trials=Math.max(1,Math.min(512,opts.transferTrials||48));
+    for(let i=0;i<trials*4&&tasks.length<trials;i++){
+      const parent=incumbentInputs[i%incumbentInputs.length],raws=parent.members.map(m=>m.raw);
+      let proposal;
+      if(broad&&i%5===4){
+        const slot=Math.floor(rng()*raws.length),items=raws.slice();
+        if(!replaceAt(items,slot))continue;
+        proposal={raws:loadoutNeighborhood.repairSupports(items),kind:'swap',slot};
+      }else proposal=loadoutNeighborhood.propose(raws,rng);
+      if(!proposal?.raws)continue;
+      const members=parent.members.map((m,j)=>{
+        const raw=proposal.raws[j];
+        return raw.styleId===m.styleId?{...m,raw}:{...m,styleId:raw.styleId,raw,statsManual:[],deckSkillIds:[],strictDeckSkills:false};
+      });
+      let design=parent.design;
+      const front=members.map(m=>m.front),rule=incumbentRule(parent);
+      if(proposal.kind==='swap'){
+        const slot=proposal.slot;
+        const before=partyOf(raws.map((r,j)=>({...r,_skills:parent.members[j].deckSkillIds})),front,rule).party;
+        const after=partyOf(proposal.raws.map((r,j)=>j===slot?r:{...r,_skills:members[j].deckSkillIds}),front,rule).party;
+        const fit=transferActorAxis(design,slot,before[slot],after,skillSlotCap(proposal.raws[slot],after[slot].role),rng);
+        members[slot].deckSkillIds=fit.ids;members[slot].strictDeckSkills=true;design=fit.design;
+      }
+      const id=JSON.stringify([candidateIdentity(proposal.raws,front,rule),design]);
+      if(seenMoves.has(id))continue;
+      seenMoves.add(id);
+      const incumbent=normalizeIncumbent({...parent,members,design,longTransfer:true,label:proposal.kind==='swap'?'换人并调整技能':'沿用已有轴 · 调整配置'});
+      if(incumbent)tasks.push({type:'incumbent',incumbent,move:proposal.kind});
+    }
+  }
   progress('final',0,tasks.length,finalists.map(f=>f.label).join(' / '));
   const messages=await Promise.all(tasks.map(task=>runner.run(task).then(m=>{
     progress('final',++fdone,tasks.length,(task.f||task.incumbent).label);return m;
   },err=>({errors:[{label:(task.f||task.incumbent).label,error:String(err?.message||err)}]}))));
-  const outs=messages.map(m=>{errors.push(...(m?.errors||[]));return m?.r||null;});
+  const outs=messages.map((m,i)=>{addWork(m);errors.push(...(m?.errors||[]));if(m?.r&&tasks[i].move)countMove(tasks[i].move);return m?.r||null;});
   const seenOutput=new Set();
   const out=outs.filter(Boolean).flatMap(r=>{const {alternatives=[],...best}=r;return [best,...alternatives];}).filter(r=>{
     const k=JSON.stringify([r.members.map(m=>[rawIdentity(m.raw),m.deckSkillIds,m.front]),r.rule,r.design]);
     if(seenOutput.has(k))return false;seenOutput.add(k);return true;
   });
 
+  // A route discovered under an easy rule can survive a higher multiplier.
+  // Replay it unchanged against the actual enemies of each eligible rule.
+  if(longKind&&longKind!=='validate'&&opts.searchRules!==false&&ruleOpts.length>1&&out.length){
+    const ranked=out.slice().sort(compareFinal),byRate=out.slice().sort((a,b)=>b.mc[minSuccessBasis]-a.mc[minSuccessBasis]||compareFinal(a,b));
+    const rosters=new Set(),parents=[ranked[0],byRate[0]];
+    for(const t of ranked){
+      const k=t.members.map(m=>m.styleId).sort().join('|');
+      if(!rosters.has(k)){rosters.add(k);parents.push(t);}
+      if(rosters.size>=4)break;
+    }
+    const extra=[];
+    for(const parent of new Set(parents))for(const [ri,rule] of ruleOpts.entries()){
+      if(ri===parent.rule)continue;
+      const k=JSON.stringify([parent.members.map(m=>[rawIdentity(m.raw),m.deckSkillIds,m.front]),ri,parent.design]);
+      if(seenOutput.has(k))continue;seenOutput.add(k);
+      const incumbent={members:parent.members,design:parent.design,ruleIds:rule.ids,label:'沿用行动轴 · 比较规则',longTransfer:true};
+      extra.push(incumbent);
+    }
+    if(extra.length){
+      progress('final',0,extra.length,'跨规则重放已有轴');
+      let done=0;
+      const rerated=await Promise.all(extra.map(async incumbent=>{
+        try{return await runner.run({type:'incumbent',incumbent});}
+        catch(err){return {errors:[{label:incumbent.label,error:String(err?.message||err)}]};}
+        finally{progress('final',++done,extra.length,'跨规则重放已有轴');}
+      }));
+      for(const m of rerated){errors.push(...(m?.errors||[]));addWork(m);if(m?.r){countMove('rule');out.push(m.r);}}
+    }
+  }
   // 最终排名：最高分 = 成功样本条件均分；失败率独立保留；零成功样本没有均分。
   out.sort(compareFinal);
   // 按轴完成率 / 含续打通关率可单独划线；先筛全部重评结果再取前 N，低于线的高分不占名额。
   const qualified=out.filter(r=>Number.isFinite(r.mc?.[minSuccessBasis])&&r.mc[minSuccessBasis]>=minSuccess);
   const bestAttempt=out.slice().sort((a,b)=>b.mc[minSuccessBasis]-a.mc[minSuccessBasis]||b.mc.success-a.mc.success||b.cleared-a.cleared||compareFinal(a,b))[0];
-  return {elapsed:Date.now()-t0,evaluated:results.length,screened,promoted,iterations:iter,searchBudget:{evaluations:maxIter,batch:budget.batch,seed:opts.seed??97},incumbents:incumbentInputs.length,
+  const rosterLeaders=new Map();
+  if(longKind)for(const t of out){
+    const key=t.members.map(m=>m.styleId).sort().join('|');
+    if(!rosterLeaders.has(key))rosterLeaders.set(key,t);
+  }
+  const longPool=longKind?[...new Set([...qualified.slice(0,topLimit),...out.filter(t=>t.mc[minSuccessBasis]>=searchThreshold).slice(0,topLimit),
+    ...out.slice().sort((a,b)=>b.mc[minSuccessBasis]-a.mc[minSuccessBasis]||compareFinal(a,b)).slice(0,4),...[...rosterLeaders.values()].slice(0,8)])]:null;
+  return {...(longKind?{longPassKind:longKind,moves,frontier:longPool,...totals}:{}),elapsed:Date.now()-t0,evaluated:results.length,screened,promoted,iterations:iter,searchBudget:{evaluations:maxIter,batch:budget.batch,seed:opts.seed??97},incumbents:incumbentInputs.length,
     minSuccess,minSuccessBasis,rejectedBySuccess:out.length-qualified.length,qualifiedCandidates:qualified.length,resultCandidates:out.length,
     attempt:bestAttempt?{cleared:bestAttempt.cleared,phases:nPhases,mc:bestAttempt.mc}:null,
     candidates:{seeds:cands.filter(c=>['base','deck','swap'].includes(c.origin)).length,random:cands.filter(c=>c.origin==='random').length,

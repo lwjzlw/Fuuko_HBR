@@ -440,7 +440,7 @@ def decks_from_tables(tables: dict, catalog: dict) -> list[dict]:
                 "accessories": accessories, "unresolvedAccessories": unresolved, "supportStyleId": support["id"] if support else None,
                 "limitBreak": card.get("_limitBreakLevel"), "tearLevel": card.get("_daphneUsedNum"),
                 # 面板推算用的原始数据
-                "card": {"level": card.get("_level"), "daphne": card.get("_daphneUsedNum"), "latentPanels": list(card.get("_latentPanelAcquiredCountList") or []),
+                "card": {"level": card.get("_level"), "daphne": card.get("_daphneUsedNum"), "resonanceShift": bool(card.get("_isResonanceShift")), "latentPanels": list(card.get("_latentPanelAcquiredCountList") or []),
                          "treeParts": [{"id": x.get("_masterAbilityTreeId"), "count": x.get("_count")} for x in card.get("_abilityTreeParts") or []]},
                 "character": {"level": char.get("_level"), "reincarnation": char.get("_reincarnationCount"), "tieLevel": char.get("_tieLevel"),
                               "titleExp": char.get("_titleBadgeExp"), "latentLevel": char.get("_latentLevel")},
@@ -467,7 +467,7 @@ def owned_cards(tables: dict, catalog: dict) -> list[dict]:
         out.append({
             "styleId": style["id"], "cardSourceId": card.get("_masterCardId"), "characterId": style.get("characterId"),
             "limitBreak": card.get("_limitBreakLevel"), "tearLevel": card.get("_daphneUsedNum"),
-            "card": {"level": card.get("_level"), "daphne": card.get("_daphneUsedNum"), "latentPanels": list(card.get("_latentPanelAcquiredCountList") or []),
+            "card": {"level": card.get("_level"), "daphne": card.get("_daphneUsedNum"), "resonanceShift": bool(card.get("_isResonanceShift")), "latentPanels": list(card.get("_latentPanelAcquiredCountList") or []),
                      "treeParts": _tree_parts(card)},
             "character": {"level": char.get("_level"), "reincarnation": char.get("_reincarnationCount"), "tieLevel": char.get("_tieLevel"),
                           "titleExp": char.get("_titleBadgeExp"), "latentLevel": char.get("_latentLevel")},
@@ -485,5 +485,13 @@ def decks_from_cache(catalog: dict, cache_dir: Path | None = None) -> dict:
     data = read_tables(cache_dir)
     t = data["tables"]
     missing = [k for k in ("deck_members", "deck_slots", "deck_meta") if k not in t]
-    return {"decks": decks_from_tables(t, catalog) if not missing else [], "missing_tables": missing, "read_at": data["source"]["read_at"],
-            "cards": owned_cards(t, catalog), "accessories": accessory_inventory(t)}
+    result = {"decks": decks_from_tables(t, catalog) if not missing else [], "missing_tables": missing, "read_at": data["source"]["read_at"],
+              "cards": owned_cards(t, catalog), "accessories": accessory_inventory(t)}
+    if "boosters" in t and "spheres" in t:
+        counts = defaultdict(int)
+        for table, key in (("boosters", "_masterSeraphBoosterId"), ("spheres", "_masterSeraphSphereId")):
+            for row in t[table]:
+                if row.get(key):
+                    counts[str(row[key])] += 1
+        result["moduleCounts"] = dict(counts)
+    return result

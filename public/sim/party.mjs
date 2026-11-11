@@ -74,7 +74,7 @@ export function membersFrom(planner,archive,catalog){
     if(filled.length<STATS.length)issues.push(`第 ${i+1} 位 ${char?.name||''} 面板未填全（${STATS.length-filled.length} 项用等级粗估，偏低；建议从游戏编队导入以推算面板）`);
     const est=filled.length<STATS.length?estimateStats(catalog,m.styleId,archive):{};
     return {
-      styleId:m.styleId,front:!!m.front,
+      styleId:m.styleId,front:!!m.front,resonanceShift:m.raw?.card?.resonanceShift===true,
       limitBreak:m.limitBreak??styles[m.styleId]?.limitBreak??0,
       stats:Object.fromEntries(STATS.map(k=>[k,Number.isInteger(m.stats?.[k])?m.stats[k]:est[k]||0])),
       skillLevels,

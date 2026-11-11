@@ -1,6 +1,6 @@
 import {buildEnemy} from './sim/hbr/battle.mjs';
 
-export const BATTLE_MODEL_VERSION='2026-11-11-special-mechanics-v1';
+export const BATTLE_MODEL_VERSION='2026-11-11-support-resonance-v2';
 export function enemyContextKey(phases,{wave=null}={}){
   return JSON.stringify({wave:wave?{difficulty:Number(wave.difficulty||40),international:wave.international!==false,overkill:wave.overkill!==false}:null,
     phases:phases.map(p=>p.enemies.map(x=>({label:x.label,dp:x.dp,hp:x.maxHp,border:x.border,

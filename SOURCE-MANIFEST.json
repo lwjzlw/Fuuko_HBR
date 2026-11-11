@@ -19,8 +19,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 11530,
-      "sha256": "0605061b6eab023a2d886fa59e9daa82d2f248d0140227ed23b73abcbb18578b"
+      "bytes": 12204,
+      "sha256": "68eccf36e3e455dd3c2e15abe9d82e79a2d9f8c4c44b70c69519b17d6e4b1fe4"
     },
     {
       "path": "Update-Catalog.ps1",
@@ -35,12 +35,12 @@
     {
       "path": "hbr_app.py",
       "bytes": 11453,
-      "sha256": "581b9b9e2598787f0b38ecd3d0d695ae1fe8380082ce0369588e2fc943576b49"
+      "sha256": "d6dafe09f50c911d4558a11d8ca3d4ac86454dbcc92f53fccb8ef75b37582f23"
     },
     {
       "path": "hbr_cache.py",
-      "bytes": 27029,
-      "sha256": "f472367f9b79449f691dd481361a0a2575e1772f246adf634d18b72d4ec3bb25"
+      "bytes": 27503,
+      "sha256": "96d79057ae2105ef4ab66a9d2d08e7040c61ed3594e177538dae64cd58b901c6"
     },
     {
       "path": "hbr_enemy_parameters.py",
@@ -800,7 +800,7 @@
     {
       "path": "public/index.html",
       "bytes": 2663,
-      "sha256": "2a88d3743f127793ca519884f57938cc11d6d6f035501b6d8cf0659488deca96"
+      "sha256": "e07e5d8bf681b1992afaa3cbb34122ba4e0bba5d36d89339911db4964015626f"
     },
     {
       "path": "public/legacy-storage.mjs",
@@ -820,7 +820,7 @@
     {
       "path": "public/planner-enemies.mjs",
       "bytes": 4435,
-      "sha256": "e7384cec9974661a0b80c597d7c4fcdebe51c29255bc669913e50fe573e9eb6a"
+      "sha256": "0cbc6c2b7666070c4849c443c9941d60608b4c20f32445be2a8e0391d7485342"
     },
     {
       "path": "public/planner-gear.mjs",
@@ -829,23 +829,28 @@
     },
     {
       "path": "public/planner-loadout.mjs",
-      "bytes": 6161,
-      "sha256": "dd2ff3624b8804e3831ef2c6d8ed9cfcecd954f43531b1ea15df74c9aa14ff2c"
+      "bytes": 6456,
+      "sha256": "bb900c1ab68451812f4d8fe6fbc34d047d290cfe354fbe3305e194a7a925d8bc"
     },
     {
       "path": "public/planner-results.mjs",
-      "bytes": 7186,
-      "sha256": "5c3b893160fd71ddca2304c9787898a25011c805fa7a83194dc338f81b92a596"
+      "bytes": 7294,
+      "sha256": "a6e9ed99601db5eb3ea19b08d43431feed87756a8e8f7a973299b5f4364ac351"
     },
     {
       "path": "public/planner-ui.mjs",
-      "bytes": 73340,
-      "sha256": "404a7246ce992387472c9e39149da437319dd5ccb0ee1b0e8d8381833bdbd2d1"
+      "bytes": 76088,
+      "sha256": "66938f79d0b9e91b2b86eb3cdd45333c9d803cfabf8a549d4251030cc6c2d141"
     },
     {
       "path": "public/progress.mjs",
       "bytes": 3892,
       "sha256": "232f8147a57895f34fc302cf14093efa4686676d6596dfbc52a28cae060392d7"
+    },
+    {
+      "path": "public/sim/axis-neighborhood.mjs",
+      "bytes": 14599,
+      "sha256": "6670a66fdf80d1e7a79179bcc5a80316a45243910447f62c634d69f835d3e4d3"
     },
     {
       "path": "public/sim/axis-repair.mjs",
@@ -869,8 +874,8 @@
     },
     {
       "path": "public/sim/hbr/battle.mjs",
-      "bytes": 124999,
-      "sha256": "bb14899edee3eb143fc97232cca7c1b82ed69abf3d8d6e46bf32d0a2d055b39e"
+      "bytes": 125093,
+      "sha256": "4ebc5a62de6f615a4951a608b833602d8ba7803c14376394c68376ee62191569"
     },
     {
       "path": "public/sim/hbr/damage.mjs",
@@ -889,8 +894,8 @@
     },
     {
       "path": "public/sim/hbr/model.mjs",
-      "bytes": 7938,
-      "sha256": "1555bced853a13dde5ad4f4c9ed3959f04fc61e2ac801ec094969b6a64da624c"
+      "bytes": 8044,
+      "sha256": "1d616b4c3e8402344522439c8eabb48aecd1404384cbdf005ea9e4266a8092f2"
     },
     {
       "path": "public/sim/hbr/rules.mjs",
@@ -903,9 +908,19 @@
       "sha256": "6dc7529504209a6eb190b582ca57998e41895c2f7b505f329e4e77bfc1692421"
     },
     {
+      "path": "public/sim/loadout-neighborhood.mjs",
+      "bytes": 13910,
+      "sha256": "c339ed2714279738d7c79d0cb89f32b244f3e40e618dd1362f21c752e0e0048e"
+    },
+    {
+      "path": "public/sim/long-search.mjs",
+      "bytes": 8325,
+      "sha256": "ab2a38f7bc85ea2f483f8887254f6ef2b6cea52b673cb91debceba9bae01d599"
+    },
+    {
       "path": "public/sim/optimizer-options.mjs",
-      "bytes": 3449,
-      "sha256": "0502731c74ad0d615daeb6a74ed841ae3634fe01141c0e7b81621f1b0240210d"
+      "bytes": 3607,
+      "sha256": "acbb08ed512019f0174eb851a4b3c72d9932f24da9ba512137669e0510cf2298"
     },
     {
       "path": "public/sim/optimizer-sub.mjs",
@@ -914,23 +929,33 @@
     },
     {
       "path": "public/sim/optimizer-worker.mjs",
-      "bytes": 1801,
-      "sha256": "f0ca49faaa412644297279d2ef3b2110083083b8d1fe102c2d6a58ef2d308dfc"
+      "bytes": 2676,
+      "sha256": "fb0cc21ea0b09ea1b36b9f27b607ac627d5bc1ab55657f8b5d7328c6b9c3fa30"
     },
     {
       "path": "public/sim/optimizer.mjs",
-      "bytes": 59290,
-      "sha256": "950d2ea8476bab81a6908d11b095f8e2988cb9304fc83d205a820cd982158207"
+      "bytes": 70330,
+      "sha256": "53432810b4a2c0a7d1680d15120b0fe71636626d7f7700ea22dadc7a80787ed8"
     },
     {
       "path": "public/sim/party.mjs",
-      "bytes": 6052,
-      "sha256": "981cadc221e4b14f7eb0037cf9223bc880802b4d5bf0907c4c486fb9696364e5"
+      "bytes": 6102,
+      "sha256": "0c51b3ce295076b22c149e52fb7fbaf13e5db9255340ad07f82178d160c29b53"
+    },
+    {
+      "path": "public/sim/search-checkpoint.mjs",
+      "bytes": 1148,
+      "sha256": "b2827a58f06253e5caeea30a047ca12ba449f9d9756310a0893113798db7638f"
     },
     {
       "path": "public/sim/search.mjs",
-      "bytes": 20715,
-      "sha256": "96fe6a5277110d142dde80242fa18295794991cbc607c49308bdb9f6f1d4bd21"
+      "bytes": 23859,
+      "sha256": "67330b6b77d84e48c3476635ea766a0cc44d8d9e5468a9295d2229b9999062dd"
+    },
+    {
+      "path": "public/sim/team-seeds.mjs",
+      "bytes": 4700,
+      "sha256": "c950d147e5c6536430a7cc4a545e361d99f27e0de774d5a135eb1696310cac99"
     },
     {
       "path": "public/sim/worker.mjs",
@@ -1009,8 +1034,8 @@
     },
     {
       "path": "scripts/package_release.py",
-      "bytes": 8348,
-      "sha256": "e3ad48ec1da6e56ef761cec6e552bc7acb655076de83b3ba776698267eaadc44"
+      "bytes": 8593,
+      "sha256": "bd6c4fa61991fddad0ac53fccbae720c3271999d6bb634285000286555244081"
     },
     {
       "path": "scripts/release_support.py",
@@ -1041,6 +1066,11 @@
       "path": "tests/automatic-skills.test.mjs",
       "bytes": 4965,
       "sha256": "4b6e05744c8b2d9b72ac501bedacf653f14f56121fb69471c6f27985ede38de2"
+    },
+    {
+      "path": "tests/axis-neighborhood.test.mjs",
+      "bytes": 3837,
+      "sha256": "389c9a31970039541dbbf25c0c838a06dad21e6cb3890e9033103f92ce2a13fa"
     },
     {
       "path": "tests/boss-model.test.mjs",
@@ -1083,14 +1113,24 @@
       "sha256": "6c5ff36489fa7b5bb8947c30d4ccbf0f13479437f4c9497b2a9912210a3cfdac"
     },
     {
+      "path": "tests/loadout-neighborhood.test.mjs",
+      "bytes": 5712,
+      "sha256": "3f1373b471d26f839148469b24faae97dfe42646de9d03ec08bdbe6e654d08d0"
+    },
+    {
+      "path": "tests/long-search.test.mjs",
+      "bytes": 6118,
+      "sha256": "2c1a52136b5b18c4ab6817289eb30ce8b35a2c8bd2a4c9b9999b01cd44383a4e"
+    },
+    {
       "path": "tests/monte-carlo.test.mjs",
       "bytes": 3952,
       "sha256": "f2a055c3dc34b13e0c12f046dc9b7eaee8fae01301c449d9ec71d5b68f021802"
     },
     {
       "path": "tests/optimizer-stability.test.mjs",
-      "bytes": 24756,
-      "sha256": "15622bc468db91001b2d6f69b50ddd772c32fa4e9fdc009cb643a565b80e4230"
+      "bytes": 24834,
+      "sha256": "53e6c59c1fb5feda4958cfa1ef5ff00b792a9b5a6935e3b67685a9b6af8f52c9"
     },
     {
       "path": "tests/optimizer.test.mjs",
@@ -1124,8 +1164,8 @@
     },
     {
       "path": "tests/planner.test.mjs",
-      "bytes": 84912,
-      "sha256": "bee7f276639b9de8f1cd94c9da922a3c5c2b9c9fd323d9cbb59653d81ba3ee3f"
+      "bytes": 84947,
+      "sha256": "a3c71dd8479139cb18e14a9d92d3a345bd243c5f0e89a9acf281ca9ef280e624"
     },
     {
       "path": "tests/progress.test.mjs",
@@ -1146,6 +1186,11 @@
       "path": "tests/storage.test.mjs",
       "bytes": 2376,
       "sha256": "8fa28bf9dc63a212a3d5f803cfae8d6d13b273b444d49f73d46730dde173f96f"
+    },
+    {
+      "path": "tests/team-seeds.test.mjs",
+      "bytes": 2220,
+      "sha256": "36f0c9127e627198c84d76735614bb7afa72db4a57b9d9b1a8ad9f1567613b4b"
     },
     {
       "path": "tests/test_build_bosses.py",
@@ -1169,8 +1214,8 @@
     },
     {
       "path": "tests/test_hbr_cache.py",
-      "bytes": 22633,
-      "sha256": "aa7bfa87d31ebfbe322e18019d589d29967aa6039a938203603baf71d0b2a941"
+      "bytes": 23839,
+      "sha256": "78e2df03db49b203f58f42e45646d682f7c47602ec5f0641945c24a671245cb7"
     },
     {
       "path": "tests/test_release.py",
@@ -1185,7 +1230,7 @@
     {
       "path": "workbench.json",
       "bytes": 647,
-      "sha256": "289c403f24d6d3366740415d483ccf7b49efdef66a0fa9d0e2655c164d0f6527"
+      "sha256": "c2b5c39bbf4aa75fb68ac19952dcadcf90f49e212ef787f9fc59a3b8944bfa1c"
     },
     {
       "path": "启动研究室.vbs",

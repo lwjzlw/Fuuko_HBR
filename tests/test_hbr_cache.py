@@ -345,6 +345,23 @@ class DeckTests(unittest.TestCase):
         self.assertNotIn("ring", member["accessories"])
         self.assertIsNone(deck["members"][1])
 
+    def test_resonance_shift_reaches_deck_and_roster(self):
+        card = {**CARDS[1], "_isResonanceShift": True}
+        tables = {"cards": [card], "deck_meta": [DECK_META], "deck_slots": DECK_SLOTS, "deck_members": DECK_MEMBERS}
+        self.assertTrue(hbr_cache.owned_cards(tables, CATALOG)[0]["card"]["resonanceShift"])
+        self.assertTrue(hbr_cache.decks_from_tables(tables, CATALOG)[0]["members"][0]["card"]["resonanceShift"])
+
+    def test_module_inventory_requires_both_tables_and_counts_real_copies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "_bcdb0_"
+            self.write(cache)
+            boosters = [{"_masterSeraphBoosterId": 20, "_isAlreadyPossessed": True}] * 2
+            chips = [{"_masterSeraphSphereId": 30, "_isAlreadyPossessed": True}] * 3
+            (cache / "BM").write_bytes(hbr_cache.encode(json.dumps(boosters).encode()))
+            self.assertNotIn("moduleCounts", hbr_cache.decks_from_cache(CATALOG, cache))
+            (cache / "CH").write_bytes(hbr_cache.encode(json.dumps(chips).encode()))
+            self.assertEqual(hbr_cache.decks_from_cache(CATALOG, cache)["moduleCounts"], {"20": 2, "30": 3})
+
     def test_unresolved_instance_is_reported_separately_from_empty_slot(self):
         tables = {"deck_meta": [DECK_META], "deck_slots": DECK_SLOTS,
                   "deck_members": [{**DECK_MEMBERS[0], "_ringAccessoryId": 999, "_jewelAccessoryId": 8}],

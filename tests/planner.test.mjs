@@ -505,6 +505,7 @@ test('support resonance, deck-listed passives, bracelet normal attack, DamageSp,
   const f=fixtureParty({A:[atkSkill('A1',2,1000),deckPassive],passives:[small,big]});
   const stats={styles:{SUP:{resonance:'G1'}},supportSkills:{G1:[{lb:0,passive:{label:'Sup0',name:'R',timing:'OnEveryTurn',condition:'IsFront()',parts:[{skillType:'OverDrivePointUp',targetType:'Self',power:[0.05,0]}]}},
     {lb:4,passive:{label:'Sup4',name:'R',timing:'OnEveryTurn',condition:'IsFront()',parts:[{skillType:'OverDrivePointUp',targetType:'Self',power:[0.1,0]}]}}]}};
+  f.catalog.styles[0].tier='SSR';
   const p=buildParty([{styleId:'S1',stats:{str:500,dex:500},front:true,deckSkillIds:[f.party[0].skills[0].id,9101],supportStyleId:'SUP',supportLimitBreak:4,
     equipment:{normalAttackUp:200,normalElement:'ice'}},{styleId:'S2',stats:{},front:true}],{skills:f.skills,catalog:f.catalog,stats});
   assert.deepEqual(p[0].passives.map(x=>x.name),['勢如破竹[特性強化]','日蔭下的午休','R']);

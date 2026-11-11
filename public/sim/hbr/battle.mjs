@@ -4,7 +4,7 @@
 import * as R from './rules.mjs';
 import {computeAttack,earringBonus,capAttack} from './damage.mjs';
 import {buffSize,debuffSize,isStrengthenableDebuff,isDefenseDebuff,isAttackBuff} from './effects.mjs';
-import {attackModel,effectModel,elementOf,ATTACK_PART_TYPES} from './model.mjs';
+import {attackModel,effectModel,elementOf,ATTACK_PART_TYPES,hasSupportResonance} from './model.mjs';
 import {evaluate,UnsupportedCondition} from '../expr.mjs';
 import {resolveEnemyParameters} from '../../boss-model.mjs';
 
@@ -96,7 +96,7 @@ export function buildParty(members,data){
           parts:s.passive.parts?.length?s.passive.parts:s.parts,source:'deckPassive',skillLabel:s.label}))
           .filter(p=>!(own.passives||[]).some(q=>q.label===p.label||q.name===p.name)),
         // 支援卡的共鸣特性（按支援卡突破数取档）
-        ...supportPassives(m,data)].filter((p,_,all)=>!superseded(p,all)),
+        ...supportPassives(m,data,style)].filter((p,_,all)=>!superseded(p,all)),
       front:!!m.front,initialSp:Number(m.initialSp)||0,noNormal:!!command,immersion:!!own.immersion,
       damageLimiter:(m.deckSkillIds||[]).some(id=>data.stats?.extraSkills?.[id]?.parts?.some(p=>p.skillType==='ForceOneDamageByHit')),
       // 我方 DP/HP（面板推算或手填；0 = 未知，此成员不承受伤害）
@@ -113,7 +113,8 @@ function superseded(p,all){
   return !/\[特性強化\]$/.test(p.name||'')&&all.some(q=>q!==p&&/\[特性強化\]$/.test(q.name||'')&&base(q.name)===base(p.name));
 }
 /** 支援卡共鸣特性：stats.styles[支援卡].resonance → stats.supportSkills[组] 中 lb ≤ 支援卡突破数 的最高档。 */
-function supportPassives(m,data){
+function supportPassives(m,data,style){
+  if(!hasSupportResonance(style,m.resonanceShift))return [];
   const sid=m.supportStyleId;if(!sid)return [];
   const group=data.stats?.styles?.[sid]?.resonance,list=data.stats?.supportSkills?.[group];
   if(!list?.length)return [];

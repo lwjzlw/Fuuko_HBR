@@ -2,6 +2,7 @@
 import {canEquip,describeEffect,statNames} from './equipment.mjs';
 import {accessoryEffects} from './sim/hbr/deck.mjs';
 import {EXPANSION,styleStatus,STAT_MODEL} from './sim/hbr/stats.mjs';
+import {hasSupportResonance} from './sim/hbr/model.mjs';
 
 const SLOTS={earring:'耳环',necklace:'项链',ring:'戒指',bracelet:'手镯',soul:'灵魂书',jewel:'宝玉',powerCharm:'力量吊饰',dexterityCharm:'灵巧吊饰',toughnessCharm:'体力吊饰',spiritCharm:'精神吊饰',wisdomCharm:'智慧吊饰',luckCharm:'幸运吊饰'};
 const CONDITION={IsAttacker:'ATK',IsBreaker:'BRK',IsBlaster:'BLA',IsHealer:'HEAL',IsBuffer:'BUFF',IsDebuffer:'DEBUFF',IsDefender:'DEF',IsAdmiral:'ADMIRAL'};
@@ -56,7 +57,9 @@ export function supportDetails(member,{catalog,stats}){
   const lb=member?.supportLimitBreak??raw?.supportLimitBreak??(raw?.support?.styleId===sid?raw.support.limitBreak:null);
   const lines=['突破：'+(lb==null?'未记录':lb)];
   const group=stats?.styles?.[sid]?.resonance,list=stats?.supportSkills?.[group];
-  if(lb==null)lines.push('共鸣特性：突破未记录，无法确认档位');
+  const main=catalog?.styles?.find(s=>s.id===(member.styleId||raw?.styleId));
+  if(main?.tier&&!hasSupportResonance(main,raw?.card?.resonanceShift))lines.push('共鸣特性：主位未灵魂共振，此配置仅获得支援面板');
+  else if(lb==null)lines.push('共鸣特性：突破未记录，无法确认档位');
   else if(list?.length){
     const hit=list.filter(x=>x.lb<=lb).sort((a,b)=>b.lb-a.lb)[0];
     if(hit){const p=hit.passive;lines.push(`共鸣特性：${p.name||p.label}（突破 ${hit.lb} 档）`);

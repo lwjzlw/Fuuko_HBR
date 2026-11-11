@@ -35,7 +35,7 @@ export function packOptimizationResult(targetKey, result, settings, selected = 0
     evaluated: result.evaluated, screened: result.screened, threads: result.threads,
     scopeKey: settings.scopeKey || null, searchVersion: result.searchVersion || null,
     iterations: result.iterations, searchBudget: result.searchBudget, incumbents: result.incumbents,
-    errorCount: result.errors?.length || 0, top,
+    longSearch:result.longSearch,errorCount:result.errorCount??result.errors?.length??0,top,
   });
 }
 
@@ -95,7 +95,7 @@ export function optimizationScope(targetKey,input){
     difficulty:target.difficulty,international:target.international,overkill:opts.overkill,allOrbs:opts.allOrbs,
     optimizeCards:opts.optimizeCards,cards:opts.optimizeCards===false?target.cards:null,
     dataVersions:Object.fromEntries(['catalog','skills','stats','equipment'].map(k=>[k,{schema:data[k]?.schemaVersion,version:data[k]?.version,generatedAt:data[k]?.generatedAt}])),
-    styles:archive.styles,characters:archive.characters,cardsOwned:cache.cards,accessories:cache.accessories}));
+    styles:archive.styles,characters:archive.characters,inventory:archive.gameInventory,moduleCounts:cache.moduleCounts,cardsOwned:cache.cards,accessories:cache.accessories}));
   return signature(text);
 }
 

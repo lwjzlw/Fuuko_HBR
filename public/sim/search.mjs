@@ -2,7 +2,7 @@
 // 每个行动轮分三步展开：第一步同时决定“前排三人 + 第一个行动者与技能”，之后两步决定其余两人；完全相同的状态合并。
 // OD 有两个发动时机（同 Planner）：回合开始（先 OD 轮再普通轮）或回合结束（普通轮后接 OD 轮，再敌方行动）。
 // 追加回合：获得追加回合的成员单独再行动一轮（不加 SP）。最终排名用真实评价（积分挑战用计分公式）。
-import {setPhase,initialState,cloneState,startTurn,odCost,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,availableCommands,useCommand,usableSkills,act,bestTurnDamage,stateKey,NORMAL} from './hbr/battle.mjs';
+import {setPhase,initialState,cloneState,startTurn,odCost,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,availableCommands,useCommand,usableSkills,canLimitDamage,act,bestTurnDamage,stateKey,NORMAL} from './hbr/battle.mjs';
 import {scoreAttackScore,waveDamageScore} from '../boss-model.mjs';
 
 export const OBJECTIVES={score:'积分挑战高分',minTurns:'最少回合击破',maxDamage:'单回合最大伤害'};
@@ -49,6 +49,38 @@ export function carryoverValue(st){
   }
   const count=st.units.length||1;
   return -spent+0.5*sp/count+0.5*st.od/300+0.25*vitals/count+0.25*lowest;
+}
+// Aggregate carryover cannot distinguish an SP-rich damage dealer from an
+// SP-rich support. Preserve different recoverable resources across phases,
+// including each member's own limited-use skills and independent commands.
+export function carryFrontier(items,stateOf,scoreOf,{seed=0,limit=5}={}){
+  if(!items.length)return [];
+  const ranked=items.slice().sort((a,b)=>scoreOf(b)-scoreOf(a));
+  if(ranked.length<=1)return ranked;
+  const entries=ranked.map(item=>{
+    const st=stateOf(item),units=st.units;
+    const sp=units.map(u=>u.sp);
+    const uses=units.map(u=>{
+      const weights=limitedUseWeights(st.ctx.party[u.i].skills);
+      return (u.commandRemaining||0)-Object.entries(u.uses).reduce((v,[label,n])=>v+n*(weights.get(label)||0),0);
+    });
+    const hp=units.map(u=>(u.hp+u.dp)/Math.max(1,st.ctx.party[u.i].hpMax+st.ctx.party[u.i].dpMax));
+    const effects=units.map(u=>u.effects.reduce((v,e)=>v+(ATK_TYPES.has(e.type)?(e.size||0):0),0));
+    const metrics=[carryoverValue(st),st.od,Math.min(...hp),...sp,...uses,...effects];
+    return {item,metrics};
+  });
+  const out=new Set([ranked[0]]);
+  const dimensions=entries[0].metrics.length;
+  // Always include the best aggregate reserve. Rotate the remaining
+  // dimensions by batch so later searches inspect different tradeoffs.
+  const offset=(seed>>>0)%(dimensions-1);
+  for(let i=0;i<dimensions&&out.size<limit;i++){
+    const j=i===0?0:1+(i-1+offset)%(dimensions-1);
+    let best=entries[0];
+    for(const e of entries)if(e.metrics[j]>best.metrics[j])best=e;
+    out.add(best.item);
+  }
+  return [...out];
 }
 export function progress(st){
   let total=0,remaining=0;
@@ -104,6 +136,21 @@ function searchStateKey(s){
   });
   return stateKey(s)+'|'+JSON.stringify([s.odWindow,s.extraActed||0,vitals,enemies]);
 }
+function setupBranch(sorted,o){
+  const first=sorted[0],actor=(((o.seed??0)>>>0)+first.turn+first.plan.length)%first.units.length;
+  let best=null,value=-Infinity;
+  for(const state of sorted){
+    if(state.killedTurn||state.wiped)continue;
+    const u=state.units[actor];if(u.down)continue;
+    // Promote a prepared ally even if their setup has yet to hit the enemy.
+    // Each batch/round gives a different actor an opportunity to finish it.
+    const buffs=u.effects.reduce((v,e)=>v+(ATK_TYPES.has(e.type)?Math.min(2,(e.size||0)/100):0),0);
+    const debuffs=state.enemy.effects.reduce((v,e)=>v+(DEF_TYPES.has(e.type)?Math.min(1,(e.size||0)/100):0),0);
+    const v=buffs+debuffs+u.sp/20+state.od/300+progress(state);
+    if(v>value){best=state;value=v;}
+  }
+  return best;
+}
 function prune(list,o,width){
   // waveScore：已击破与未击破的分开各留 width 个，免得已击破的占满束宽、没人继续多打一回合
   if(o.objective==='waveScore'&&!o._split){const k=list.filter(s=>s.killedTurn),a=list.filter(s=>!s.killedTurn);
@@ -112,6 +159,10 @@ function prune(list,o,width){
   const sorted=list.slice().sort((a,b)=>b.h-a.h);
   const seen=new Set(),out=[];
   for(const s of sorted){const k=searchStateKey(s);if(seen.has(k))continue;seen.add(k);out.push(s);if(out.length>=width)break;}
+  if(o.longSearch&&sorted.length>out.length){
+    const prepared=setupBranch(sorted,o);
+    if(prepared){const key=searchStateKey(prepared);if(!seen.has(key)){out.push(prepared);seen.add(key);}}
+  }
   if(o.reserveResources&&sorted.length>out.length){
     let reserve=null,best=-Infinity;
     for(const s of sorted){
@@ -205,11 +256,14 @@ function appendActions(next,state,actors,kind,stats){
     for(const target of targets){
       const entry={k:kind,u,s:k};
       if(target!==undefined)entry.target=target;
-      const c=child(state,entry);
-      act(c,u,k,target);
-      if(kind==='extra')c.extraActed=(c.extraActed||0)|1<<u;
-      else c.acted|=1<<u;
-      stats.expanded++;next.push(c);
+      const varyLimiter=stats.longSearch&&canLimitDamage(state.ctx.party[u],skill);
+      for(let limited=0;limited<=(varyLimiter?1:0);limited++){
+        const c=child(state,limited?{...entry,limiter:true}:entry);
+        act(c,u,k,target,!!limited);
+        if(kind==='extra')c.extraActed=(c.extraActed||0)|1<<u;
+        else c.acted|=1<<u;
+        stats.expanded++;next.push(c);
+      }
     }
   }
 }
@@ -294,7 +348,7 @@ function runOd(beam,o,stats){
 export function search(ctx,o,onProgress=()=>{}){
   const owner=ctx.party.find(m=>m.skills.some(s=>s.label==='BIYamawakiSkill55'));
   if(owner)o={...o,servantFinisher:{actor:owner.i,skill:owner.skills.findIndex(s=>s.label==='BIYamawakiSkill55')}};
-  const t0=Date.now(),stats={expanded:0};
+  const t0=Date.now(),stats={expanded:0,longSearch:!!o.longSearch};
   const flags={unsupported:{},approx:{}};
   const root=rootOf(ctx,o,flags);
   if(root.units.some(u=>u.commandRemaining>0))o={...o,hasCommands:true};
@@ -349,13 +403,20 @@ export function search(ctx,o,onProgress=()=>{}){
   const seen=new Set(),top=[];
   for(const x of ranked){const k=JSON.stringify(x.s.plan);if(seen.has(k))continue;seen.add(k);top.push(x);if(top.length>=Math.max(1,Math.min(20,o.top??5)))break;}
   if(o.reserveResources&&ranked.length){
-    let reserve=null,best=-Infinity;
-    for(const x of ranked){
-      if(!x.s.killedTurn)continue;
-      const value=carryoverValue(x.s);
-      if(value>best){reserve=x;best=value;}
+    if(o.longSearch){
+      for(const x of carryFrontier(ranked.filter(x=>x.s.killedTurn),x=>x.s,x=>x.value,{seed:o.seed,limit:5})){
+        const key=JSON.stringify(x.s.plan);
+        if(!seen.has(key)){seen.add(key);top.push(x);}
+      }
+    }else{
+      let reserve=null,best=-Infinity;
+      for(const x of ranked){
+        if(!x.s.killedTurn)continue;
+        const value=carryoverValue(x.s);
+        if(value>best){reserve=x;best=value;}
+      }
+      if(reserve&&!seen.has(JSON.stringify(reserve.s.plan)))top.push(reserve);
     }
-    if(reserve&&!seen.has(JSON.stringify(reserve.s.plan)))top.push(reserve);
   }
   const fallback=!top.length?([...beam].sort((a,b)=>progress(b)-progress(a))[0]||wiped.sort((a,b)=>(b.wiped-a.wiped)||(progress(b)-progress(a)))[0]):null;
   return {elapsed:Date.now()-t0,expanded:stats.expanded,plans:top.map(x=>summarize(ctx,o,x.s,x.value)),
