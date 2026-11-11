@@ -28,6 +28,14 @@ const PASSIVE_VALUE={OverDrivePointUp:3,HealSp:3,HealSkillUsedCount:2,DamageRate
   GiveDefenseDebuffUp:2,ZoneUpEternal:2,DefenseDown:1,HighBoost:1,SpLimitOverwrite:1,DefenseUp:0.5,HealDpRate:0.5};
 const DEFAULT_CARDS=[null,'critRate100','sp5','skillCount1','dpRevive'];
 
+function equippedSkillNames(unit,ids){
+  const remaining=new Set(ids),names=[];
+  for(const skill of unit.skills){
+    if(remaining.delete(skill.id))names.push(skill.rootName||skill.name||skill.label);
+  }
+  return names;
+}
+
 /**
  * input = {data:{catalog,skills,stats,equipment}, archive, cache:{decks,cards,accessories}, base:[planner 成员×6],
  *          target:{kind, ev, rules, phases:[{enemies}], cards:[每阶段卡|null], difficulty, international},
@@ -441,7 +449,7 @@ function setup(input,onProgress=()=>{}){
       // 仍有空格：本卡面的主动技能、再其他卡面的（SP 高的优先）。保证列表非空（空列表会被引擎当作“不限制”）
       const rest=u.skills.filter(s=>s.id>0&&!s.passive&&!extras.includes(s.id)&&!pick.includes(s.id)&&!/CommandBuff$/.test(s.label||''))
         .sort((a,b)=>(b.ownStyle?1:0)-(a.ownStyle?1:0)||(b.sp||0)-(a.sp||0));
-      for(const s of rest){if(pick.length>=room)break;pick.push(s.id);}
+      for(const s of rest){if(pick.length>=room)break;if(!pick.includes(s.id))pick.push(s.id);}
       return {ids:[...extras,...pick],cap,usedCount:actives.length};
     });
     return {need,out};
@@ -618,7 +626,7 @@ function setup(input,onProgress=()=>{}){
     // 装备说明（相对原卡面所在位置）
     const loadout=cur.raws.map((r,i)=>{
       const u=party[i],ids=new Set(cur.slots?.[i]?.ids||[]);
-      const sk=u.skills.filter(s=>ids.has(s.id)&&!s.extra).map(s=>s.name);
+      const sk=equippedSkillNames(u,[...ids].filter(id=>!stats?.extraSkills?.[String(id)]));
       const extra=[...ids].filter(id=>stats?.extraSkills?.[String(id)]).map(id=>stats.extraSkills[String(id)].name||String(id));
       return {name:`${u.name}〈${u.styleName}〉`,role:u.role,front:!!cur.front[i],isNew:!!r._new,cap:cur.slots?.[i]?.cap??null,
         skills:[...sk,...extra],changes:r._changes||[],skillsChanged:!!r._new||JSON.stringify([...(r.skillIds||[])].sort())!==JSON.stringify([...(cur.slots?.[i]?.ids||[])].sort())};
@@ -644,7 +652,7 @@ function setup(input,onProgress=()=>{}){
     const record=(j,mc,changed)=>({label:(x.label||'已有方案（重新评估）')+(changed?' · 修正排轴':''),origin:'incumbent',newTeam:false,rule:party._ri,ruleIds:ro.ids,ruleNames:ro.names,
       cleared:j.cleared,phases:nPhases,failed:j.failed,turns:j.turns,score:j.cleared===nPhases&&!j.failed&&!j.invalid?j.score:null,damage:Math.round(j.damage),robust:j.robust,
       teamElement:j.teamElement,elementDamage:j.elementDamage,elementShare:j.elementShare,mc,mcNoCards:null,design:j.design,cards:j.design.phases.map(p=>p.card||null),cardRank:[],
-      loadout:party.map((u,i)=>({name:`${u.name}〈${u.styleName}〉`,front:!!ms[i].front,isNew:false,cap:skillSlotCap(ms[i].raw,u.role),skills:u.skills.filter(s=>ms[i].deckSkillIds.includes(s.id)).map(s=>s.name||s.label),changes:[],skillsChanged:false})),
+      loadout:party.map((u,i)=>({name:`${u.name}〈${u.styleName}〉`,front:!!ms[i].front,isNew:false,cap:skillSlotCap(ms[i].raw,u.role),skills:equippedSkillNames(u,ms[i].deckSkillIds),changes:[],skillsChanged:false})),
       members:ms,team:party.map(u=>`${u.name}〈${u.styleName}〉`)});
     const out=!j.invalid||mc.successes?[record(j,mc,false)]:[];
     if(repair&&opts.fixedTeam&&nPhases>1&&mc.onPlan<0.8&&j.cleared>=Math.max(1,nPhases-2)){

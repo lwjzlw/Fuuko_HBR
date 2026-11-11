@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {optimizerInput} from './fixtures/optimizer-input.mjs';
 import {buildParty} from '../public/sim/hbr/battle.mjs';
 import {simulateDesign,monteCarlo} from '../public/sim/designer.mjs';
-import {groupAxisRows,renderAxisRows,axisView} from '../public/planner-axis.mjs';
+import {groupAxisRows,renderAxisRows,axisView,replayMechanics} from '../public/planner-axis.mjs';
 import {equipmentDetails,supportDetails,loadoutDetailsHtml} from '../public/planner-loadout.mjs';
 import {renderDesigner} from '../public/designer-ui.mjs';
 
@@ -41,7 +41,7 @@ test('real replay separates front/end OD and their extras into three-action rows
 test('free commands around a start OD keep their order and all three action slots',()=>{
   const turn={turn:1,phase:0},meta={...turn,roundId:1,unit:0};
   const rows=groupAxisRows([
-    {...turn,kind:'turn'},{...meta,kind:'command',beforeOd:true,damage:321},{...meta,kind:'break',beforeOd:true,label:'破盾'},
+    {...turn,kind:'turn'},{...meta,kind:'autoSkill',skill:'贝斯独奏',remaining:2},{...meta,kind:'command',beforeOd:true,damage:321},{...meta,kind:'break',beforeOd:true,label:'破盾'},
     {...turn,kind:'od',window:'turnStart',level:1,label:'前开 OD'},
     {...meta,kind:'round',round:'od1',actors:[0,1,2],commands:[{}]},
     {...meta,kind:'command',damage:123}
@@ -49,9 +49,19 @@ test('free commands around a start OD keep their order and all three action slot
   const html=renderAxisRows(rows,{e,n,party:battle().party});
   assert.equal(rows[0].usedCommands.length,2);assert.equal(rows[0].events[0].label,'破盾');
   assert.ok(html.indexOf('321')<html.indexOf('前开 OD'));
+  assert.match(html,/自动.*贝斯独奏 · 剩 2 次/);
+  assert.ok(html.indexOf('贝斯独奏')<html.indexOf('321'));
   assert.ok(html.indexOf('前开 OD')<html.indexOf('123'));
   assert.ok(html.indexOf('123')<html.indexOf('class="axis-acts"'));
   assert.equal((html.match(/class="axis-act[ "]/g)||[]).length,3);
+});
+
+test('replay discloses only encountered unsupported or approximate mechanics and escapes labels',()=>{
+  assert.equal(replayMechanics({},e),'');
+  const html=replayMechanics({unsupported:{'未导入<技能>':3},approx:{'伤害范围':2}},e);
+  assert.match(html,/1 项未支持，1 项近似/);
+  assert.match(html,/未导入&lt;技能&gt;/);
+  assert.match(html,/伤害范围/);
 });
 
 test('end OD follows normal actions when there is no extra; failed activation is not rendered',()=>{

@@ -11,10 +11,18 @@ export function replayAssumptions(critMode='expected'){
   return '按暴击概率加权的平均伤害预测；破盾/击杀不保证每次发生。';
 }
 
+export function replayMechanics(flags,e){
+  const missing=Object.keys(flags?.unsupported||{}),approx=Object.keys(flags?.approx||{});
+  if(!missing.length&&!approx.length)return '';
+  const items=(keys,label)=>keys.map(k=>`<li>${label} · ${e(k)}</li>`).join('');
+  return `<details class="axis-issues"><summary>本轴涉及的机制 · ${missing.length} 项未支持，${approx.length} 项近似</summary><ul class="compact">${items(missing,'未支持')}${items(approx,'近似')}</ul></details>`;
+}
+
 export function groupAxisRows(rows){
-  const out=[],byId=new Map();let pending=[];
+  const out=[],byId=new Map();let pending=[],autoSkills=[];
   for(const r of rows){
-    if(r.kind==='turn'||r.kind==='card'){pending=[];continue;}
+    if(r.kind==='turn'||r.kind==='card'){pending=[];autoSkills=[];continue;}
+    if(r.kind==='autoSkill'){autoSkills.push(r);continue;}
     if(r.kind==='od'){
       const previous=out.at(-1);
       // 后开在普通/追加行动结束后发动，不能放到下一轮 OD 行动之后。
@@ -23,7 +31,7 @@ export function groupAxisRows(rows){
       continue;
     }
     if(r.kind==='round'){
-      const row={...r,actions:[],usedCommands:[],events:[],before:pending,after:[]};pending=[];
+      const row={...r,actions:[],usedCommands:[],events:[],autoSkills,before:pending,after:[]};pending=[];autoSkills=[];
       out.push(row);byId.set(r.roundId,row);
     }
   }
@@ -62,11 +70,12 @@ export function renderAxisRows(rounds,{e,n,party}){
       const events=r.events.filter(v=>v.unit==null||r.usedCommands?.some(c=>c.unit===v.unit)?ci===0:chunk.some(a=>a.unit===v.unit));
       const stopped=r.events.some(v=>v.kind==='kill')&&r.actions.at(-1)?.enemy?.hp<=0;
       const commands=r.usedCommands||[];
-      const before=ci===0?commandAction(commands.filter(c=>c.beforeOd))+(r.before||[]).map(odAction).join('')
+      const auto=(r.autoSkills||[]).map(s=>`<div class="axis-command-action"><b>${e(name(s.unit))} · 自动</b><small>${e(s.skill)}${s.remaining!=null?' · 剩 '+e(String(s.remaining))+' 次':''}</small></div>`).join('');
+      const before=ci===0?auto+commandAction(commands.filter(c=>c.beforeOd))+(r.before||[]).map(odAction).join('')
         +commandAction(commands.filter(c=>!c.beforeOd),r.commands?.length):'';
       return `<li class="axis-row axis-${r.round==='extra'?'extra':r.round==='main'?'main':'inod'}" data-round="${e(r.round)}">
 <div class="axis-t"><b>T${r.turn}</b><span>${e(roundLabel(r.round))}${ci?'（续）':''}</span>${r.parentRound?`<small>${e(roundLabel(r.parentRound))} 内</small>`:''}</div>
-<div class="axis-body"><div class="axis-action-flow">${before}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${a.backup?'备用 · ':''}${e(a.skill||'未安排行动')}${Number.isInteger(a.target)?' → '+e(name(a.target)):''}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
+<div class="axis-body"><div class="axis-action-flow">${before}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${a.backup?'备用 · ':''}${e(a.skill||'未安排行动')}${a.limiter?' · 限伤开启':''}${Number.isInteger(a.target)?' → '+e(name(a.target)):''}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
 ${events.length?`<div class="axis-events">${events.map(v=>`<span class="axis-event axis-${v.kind}">${v.unit!=null?e(name(v.unit))+' · ':''}${e(v.label)}</span>`).join('')}</div>`:''}</div></li>`;
     });
   }).join('')}</ol>`;
@@ -83,6 +92,6 @@ export function axisView({e,n,party,phases,statusTypes,design,critMode='expected
 ${cards.length?`<p class="axis-card">${cards.map(c=>e(c.label)).join('　')}</p>`:''}${renderAxisRows(rs,{e,n,party})}</div>`;
   }).join('');
   const errors=res.issues.filter(x=>x.level!=='warn');
-  return {html:`<p class="subtle compact axis-assumptions">${e(replayAssumptions(options.critMode))} 每次行动显示所有目标实际扣除 DP / HP 的合计，不是单个敌人的伤害跳字。</p>`+html+(errors.length?`<details class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:''),
+  return {html:`<p class="subtle compact axis-assumptions">${e(replayAssumptions(options.critMode))} 每次行动显示所有目标实际扣除 DP / HP 的合计，不是单个敌人的伤害跳字。</p>`+html+(errors.length?`<details class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:'')+replayMechanics(res.flags,e),
     summary:{turns:res.turns,cleared:res.phases.filter(x=>x.cleared).length,phases:phases.length,failed:!!res.failed,damage:res.phases.reduce((a,x)=>a+(x.damage||0),0)}};
 }

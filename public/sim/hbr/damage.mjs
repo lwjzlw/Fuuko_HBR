@@ -141,7 +141,7 @@ export function computeAttack(a){
   const normal={perHitBase:per(base*k*R.VARIANCE[0],base*k*R.VARIANCE[1]),crit:1};
   const crit={perHitBase:per(baseCr*k*R.VARIANCE[0],baseCr*k*R.VARIANCE[1]),crit:R.CRIT_BASE_MULT+critDmg/100};
   const common={dist,attack,physMult,elemMult,token,od,defense,reduction,dpBonus,hpBonus,enemy:{...enemy,destructionLimit},
-    destructionRateBonus,hitCount:n,extra,state};
+    destructionRateBonus,hitCount:n,extra,state,forceOne:mods.forceOneDamage===true};
   const resN=simulate(common,normal),resC=simulate(common,crit);
   const sum=list=>list.reduce((s,h)=>({min:s.min+h.min,max:s.max+h.max}),{min:0,max:0});
   const tn=sum(resN.perHit),tc=sum(resC.perHit);
@@ -176,8 +176,8 @@ function simulate(c,variant){
   const perHit=[],dMin=[],dMax=[];
   variant.perHitBase.forEach((h,i)=>{
     const isExtra=i>=c.hitCount,gain=isExtra?te*(c.extra[i-c.hitCount]??0):perMain;
-    const lo=hitOnce(A,h.min*c.dpBonus*dpChain,h.min*c.hpBonus*A.dr*hpChain,gain,limit,(x)=>h.min*c.hpBonus*x*hpChain);
-    const hi=hitOnce(B,h.max*c.dpBonus*dpChain,h.max*c.hpBonus*B.dr*hpChain,gain,limit,(x)=>h.max*c.hpBonus*x*hpChain);
+    const lo=c.forceOne?hitOnce(A,1,1,gain,limit,()=>1):hitOnce(A,h.min*c.dpBonus*dpChain,h.min*c.hpBonus*A.dr*hpChain,gain,limit,(x)=>h.min*c.hpBonus*x*hpChain);
+    const hi=c.forceOne?hitOnce(B,1,1,gain,limit,()=>1):hitOnce(B,h.max*c.dpBonus*dpChain,h.max*c.hpBonus*B.dr*hpChain,gain,limit,(x)=>h.max*c.hpBonus*x*hpChain);
     dMin.push(lo.before);dMax.push(hi.before);
     perHit.push({min:lo.damage,max:hi.damage,dp:lo.dp,before:lo.before,after:lo.after});
   });

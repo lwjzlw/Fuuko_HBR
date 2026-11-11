@@ -56,6 +56,68 @@ test('published Yamawaki command is independent of actions and the six-servant B
   assert.ok(usableSkills(before,5).includes(bang));
 });
 
+test('Kunimi talismans use each enemy’s level, count actions instead of hits and reset between enemy turns',()=>{
+  const catalog=JSON.parse(fs.readFileSync(new URL('../public/data/catalog.json',import.meta.url)));
+  const skills=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url)));
+  const f=fixtureParty({dp:1e8,hp:1e9,initialSp:20});
+  const [kunimi]=buildParty([{styleId:'TKunimi10',front:true,stats:f.party[0].stats,limitBreak:4,extraStyleIds:[],initialSp:20}],{catalog,skills});
+  const party=[kunimi,...f.party.map((m,i)=>({...m,i:i+1,front:i<2,elements:['ice']}))];
+  const enemy=buildEnemy(f.event,f.stage),other={...enemy,label:'other'};
+  const st=initialState(party,enemy,{statusTypes:skills.statusTypes,followUpRate:0});
+  const levels=()=>st.queue.map(q=>q.state.effects.find(e=>e.status==='Talisman')?.level);
+  setPhase(st,[enemy,other]);assert.deepEqual(levels(),[0,0]);
+  startTurn(st);assert.deepEqual(levels(),[2,2]);
+  act(st,1,NORMAL);assert.deepEqual(levels(),[3,2]);
+  const ex=kunimi.skills.findIndex(s=>s.label==='TKunimiSkill56');
+  act(st,0,ex);assert.deepEqual(levels(),[6,5],'five-hit EX raises each target once plus its own two-level passive');
+  assert.equal(collectModsFor(st,0).misfortune,60);
+  for(let i=0;i<6;i++)act(st,1,NORMAL);
+  assert.deepEqual(levels(),[10,5]);endPlayerTurn(st);assert.deepEqual(levels(),[0,0]);
+  st.killedTurn=1;setPhase(st,[enemy,other]);assert.deepEqual(levels(),[0,0]);
+  const extras=JSON.parse(fs.readFileSync(new URL('../public/data/stats.json',import.meta.url))).extraSkills;
+  const graviton=Object.values(extras).find(s=>s.label==='AccessorySkillFixedDamageRateIce01');
+  party[1].skills.push(graviton);st.units[1].sp=20;
+  const before=st.totalDamage;act(st,1,party[1].skills.length-1);
+  assert.equal(st.totalDamage,before);assert.deepEqual(levels(),[1,0],'Graviton raises talisman through intact shields');
+});
+
+test('Naruse’s reinforced EX applies the two-turn stat penalty to the chosen enemy before her attack',()=>{
+  const skills=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url)));
+  const root=skills.styles.HNaruse03.skills.find(s=>s.label==='HNaruseSkill51');
+  const f=fixtureParty({A:[root],dp:1e8,hp:1e9,initialSp:20}),enemy=buildEnemy(f.event,f.stage);
+  const st=initialState(f.party,enemy,{followUpRate:0});
+  setPhase(st,[enemy,{...enemy,label:'other'}]);startTurn(st);
+  st.units[0].reinforced='light';act(st,0,0);
+  assert.equal(collectModsFor(st,0).misfortune,100);
+  assert.ok(!st.queue[1].state.effects.some(e=>e.status==='Undermine'));
+  endPlayerTurn(st);assert.equal(collectModsFor(st,0).misfortune,100);
+  startTurn(st);endPlayerTurn(st);assert.equal(collectModsFor(st,0).misfortune,0);
+});
+
+test('published DP sacrifice uses current DP, leaves one DP and cannot revive a broken shield',()=>{
+  const skills=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url)));
+  const half=skills.styles.MAikawa09.skills.find(s=>s.label==='MAikawaSkill08');
+  const full=skills.styles.FMikoto04.skills.find(s=>s.label==='FMikotoSkill04');
+  const team=fixtureParty({A:[half,full],initialSp:20});
+  team.party[0].dpMax=1000;
+  const st=initialState(team.party,buildEnemy(team.event,team.stage),{});
+  startTurn(st);st.units[0].dp=400;act(st,0,0);assert.equal(st.units[0].dp,200);
+  act(st,0,1);assert.equal(st.units[0].dp,1);assert.equal(st.units[0].dpBroken,false);
+  st.units[0].dp=0;st.units[0].dpBroken=true;
+  assert.ok(!usableSkills(st,0).includes(0));assert.ok(!usableSkills(st,0).includes(1));
+});
+
+test('the real 30 percent front-row attack passive follows the sampled roll',()=>{
+  const skills=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url)));
+  const passive=skills.styles.Byakko03.passives.find(p=>p.label==='Passive.Turn_Rate30_AttackUp01');
+  const f=fixtureParty();f.party[0].passives=[passive];
+  for(const [roll,expected] of [[0.299,true],[0.3,false]]){
+    const st=initialState(f.party,buildEnemy(f.event,f.stage),{rng:()=>roll});
+    startTurn(st);
+    assert.equal(st.units[0].effects.some(e=>e.src===passive.label),expected);
+  }
+});
+
 // ---------------------------------------------------------------- 条件表达式
 test('expr: precedence, identifiers starting with digits, comparisons',()=>{
   const fns={IsTeam:(e,a)=>a[0].v==='31A'?1:0,Sp:()=>7};
@@ -697,13 +759,41 @@ test('specials: SummersEnd territory switches to activation, reduces 冷奏 and 
   startExtraTurn(st);act(st,0,1);assert.equal(st.passiveCount[residual.label+':0'],1,'追加回合内不重复赋予');
 });
 
-test('specials: Steak and Tea each provide an independent 50 percent skill attack state',()=>{
-  for(const type of ['Steak','Tea']){
-    const food=utilitySkill(type,[{skillType:type,targetType:'AllyAll',power:[0.5,0],value:[0.1,0],exit:eternal}]);
-    const f=fixtureParty({A:[food]});const st=initialState(f.party,buildEnemy(f.event,f.stage),{});startTurn(st);act(st,0,0);
-    assert.equal(collectModsFor(st,0).passiveAttackUp,50);assert.equal(collectMods(st,0,{element:'nonelemental',physicalType:'slash'},{normal:true}).passiveAttackUp,0);
-    assert.ok(st.flags.approx[type+' 的 DP 吸收未计（我方 DP 未建模）']);
+test('six real cuisine states stack by dish and restore DP from damage actually dealt',()=>{
+  const db=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url),'utf8'));
+  const types=['Steak','Tea','Curry','Shchi','Gelato','DimSum'];
+  const parts=Object.values(db.styles).flatMap(s=>s.skills.flatMap(k=>k.parts));
+  const dishes=types.map(t=>utilitySkill(t,[parts.find(p=>p.skillType===t)]));
+  const attack=atkSkill('TEST-ATTACK',0,1000),f=fixtureParty({A:[attack,...dishes],dp:0,hp:1000});
+  f.party[0].dpMax=10000;
+  const st=initialState(f.party,buildEnemy(f.event,f.stage),{});startTurn(st);
+  for(let i=1;i<=dishes.length;i++)act(st,0,i);
+  act(st,0,1);
+  assert.equal(collectModsFor(st,0).passiveAttackUp,300);
+  assert.equal(collectMods(st,0,{element:'nonelemental',physicalType:'slash'},{normal:true}).passiveAttackUp,0);
+  st.units[0].dp=100;
+  const hit=act(st,0,0);
+  assert.ok(hit.damage>0);assert.ok(Math.abs(st.units[0].dp-(100+0.6*hit.damage))<1e-5);
+});
+
+test('Kanade drains her own DP from her hit, and lower recovery caps preserve an existing surplus',()=>{
+  const db=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url),'utf8'));
+  const skill=db.styles.AliceA04.skills.find(s=>s.label==='AliceASkill04');
+  const f=fixtureParty({A:[skill],dp:0,hp:500,initialSp:20});
+  f.party[0].dpMax=2000;
+  for(const start of [500,2200]){
+    const st=initialState(f.party,buildEnemy(f.event,f.stage),{});startTurn(st);st.units[0].dp=start;
+    const {damage}=act(st,0,0);assert.ok(damage>0);
+    assert.equal(st.units[0].dp,start>2000?start:start+damage*0.3);
   }
+});
+
+test('the summer formation heals front and back up to 120 percent on normal turn starts',()=>{
+  const f=fixtureParty();for(const m of f.party)m.dpMax=1000;
+  const st=initialState(f.party,buildEnemy(f.event,f.stage),{});
+  st.territory={name:'SummersEndTerritory',active:false};st.units[1].front=false;
+  st.units[0].dp=1180;st.units[1].dp=900;st.units[2].dp=0;st.units[2].dpBroken=true;
+  startTurn(st);assert.deepEqual(st.units.map(u=>u.dp),[1200,970,0]);
 });
 
 test('specials: clone and state key preserve EP, inscription, territory and passive trigger counts',()=>{

@@ -12,6 +12,10 @@ function indexDesign(design){
   visit(design,[]);return nodes;
 }
 const at=(obj,path)=>path.reduce((value,key)=>value[key],obj);
+function repeatActions(turn){
+  const round=turn.actions?.length?turn:turn.odEnd?.rounds?.at(-1)||turn.odStart?.rounds?.at(-1)||turn;
+  return {...emptyTurn(),front:round.front,actions:structuredClone(round.actions||[]),extra:structuredClone(round.extra||[])};
+}
 function compare(a,b){
   for(let i=0;i<a.key.length;i++)if(a.key[i]!==b.key[i])return b.key[i]-a.key[i];
   return 0;
@@ -62,9 +66,14 @@ function neighbors(current,ctx,maxTurns){
       const old=at(current.design,path);
       const allowed=[...spot.choices.values()].sort((a,b)=>b.count-a.count||a.cost-b.cost);
       const labels=new Set([allowed.find(x=>x.s==='normal')?.s,...allowed.slice(0,3).map(x=>x.s),allowed.slice().sort((a,b)=>b.cost-a.cost)[0]?.s]);
-      for(const label of labels)if(label&&label!==old.s)mutate((_,turn,d)=>{
-        const action=at(d,path);action.s=label;delete action.target;delete action.backup;
-      });
+      for(const label of labels)if(label&&label!==old.s){
+        const replace=d=>{const action=at(d,path);action.s=label;delete action.target;delete action.backup;delete action.limiter;};
+        mutate((_,turn,d)=>replace(d));
+        // Spending the last charge can leave the enemy alive. A legal substitute
+        // and a further turn may improve the axis only when evaluated together.
+        const turns=current.design.phases[p].turns;
+        if(t===turns.length-1&&turns.length<maxTurns)mutate((list,turn,d)=>{replace(d);list.push(repeatActions(turn));});
+      }
     }else if(spot.kind==='od'){
       const slot=path.at(-1);
       mutate((_,turn)=>{turn[slot]=null;});
@@ -73,10 +82,7 @@ function neighbors(current,ctx,maxTurns){
     }else if(current.design.phases[p].turns.length<maxTurns){
       // Write the extra turn into the plan itself. Its costs and any enemy
       // actions are included in the on-plan replay.
-      mutate((turns,turn)=>{
-        const round=turn.actions?.length?turn:turn.odEnd?.rounds?.at(-1)||turn.odStart?.rounds?.at(-1)||turn;
-        turns.push({...emptyTurn(),front:round.front,actions:structuredClone(round.actions||[])});
-      });
+      mutate((turns,turn)=>{turns.push(repeatActions(turn));});
     }
     // A separate normal turn preserves the original skill, lets the front
     // generate OD, and pays the cost of the intervening enemy attack in replay.

@@ -76,6 +76,22 @@ function historyFixture(){
 }
 const replayPrior=(input,prior)=>createTaskHandler(input)({type:'incumbent',incumbent:prior});
 
+test('a saved B-mode action replays with a single equipped slot and the original skill name',async()=>{
+  const {input,prior}=historyFixture(),root=input.data.skills.styles.S0.skills[0];
+  const leaf=element=>({...root,parts:[{...root.parts[0],elements:[element]}]});
+  root.parts=[{skillType:'SkillSwitch',branches:[leaf('Fire'),leaf('Ice')],switchModes:{a:[0],b:[1]}}];
+  for(const members of [input.base,prior.members]){
+    members[0].deckSkillIds=[root.id];members[0].raw.skillIds=[root.id];
+  }
+  prior.design.phases[0].turns[0].actions[0].s=root.label+'@b';
+  const record=replayPrior(input,prior).r;
+  assert.equal(record.design.phases[0].turns[0].actions[0].s,'Skill0@b');
+  assert.deepEqual(record.loadout[0].skills,[root.name]);
+  input.opts.fixedTeam=true;input.opts.keepLoadout=true;
+  const fresh=await optimize(input);
+  assert.ok(fresh.top.length);assert.deepEqual(fresh.top[0].loadout[0].skills,[root.name]);
+});
+
 function transferredSkillFixture(){
   const input=optimizerInput({count:6,opts:{fixedTeam:true,maxTurns:1,beam:2,screenBeam:1,mcRuns:8,top:5,minSuccess:1}});
   const attack=structuredClone(input.data.skills.styles.S0.skills[0]);

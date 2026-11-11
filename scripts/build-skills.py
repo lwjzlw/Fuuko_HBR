@@ -33,6 +33,44 @@ def newest(name: str) -> Path | None:
     return hits[0] if hits else None
 
 
+def branch_condition(label: str, caption: str, siblings: list[dict]) -> str | None:
+    """hbr.quest flattens nested conditions; each leaf carries its original Japanese rank caption."""
+    m = re.fullmatch(r'使用回数(\d+)回目(以降)?', caption)
+    if m:
+        return f'PlayedSkillCount({label}) {">=" if m[2] else "=="} {int(m[1]) - 1}'
+    m = re.fullmatch(r'士気(\d+)(?:[〜～](\d+))?', caption)
+    if m:
+        return f'MoraleLevel() >= {m[1]} && MoraleLevel() <= {m[2] or m[1]}'
+    ranks = ['絶不調', '不調', '普通', '好調', '絶好調']
+    if label == 'RKayamoriSkill57' and caption in ranks:
+        return f'MotivationLevel() == {ranks.index(caption) + 1}'
+    m = re.fullmatch(r'好調以上の味方：(\d+)人', caption)
+    if m:
+        return f'CountBC(IsPlayer() && MotivationLevel() >= 4) {">=" if m[1] == "3" else "=="} {m[1]}'
+    for pattern, expr in [(r'敵(\d+)体', 'CountBC(IsPlayer()==0 && IsDead()==0)'),
+                          (r'下僕(\d+)人', 'CountBC(IsPlayer() && SpecialStatusCountByType(155)>0)'),
+                          (r'トークン(\d+)', 'Token()')]:
+        m = re.fullmatch(pattern, caption)
+        if m:
+            return f'{expr} == {m[1]}'
+    elements = {'火属性': 'Fire', '氷属性': 'Ice', '雷属性': 'Thunder', '光属性': 'Light', '闇属性': 'Dark'}
+    if label.startswith('IIshiiSkill'):
+        if caption in elements:
+            return f'IsZone({elements[caption]})'
+        if caption == '元素属性フィールド無し':
+            return 'IsZone(None)'
+        if caption == '無属性':
+            has_separate_none = any(b.get('desc') == '元素属性フィールド無し' for b in siblings)
+            return 'IsZone(Nonelemental)' if has_separate_none else 'IsZone(Nonelemental) || IsZone(None)'
+    if caption.endswith('_リベンジレベル10'):
+        return 'RevengeLevel() >= 10'
+    if caption.endswith('_リベンジレベル9以下'):
+        return 'RevengeLevel() < 10'
+    if caption in ('追加ターン中', '非追加ターン中'):
+        return f'IsAdditionalTurn() == {int(caption == "追加ターン中")}'
+    return None
+
+
 def compact_part(p: dict) -> dict:
     eff = p.get('effect') or {}
     out = {
@@ -62,16 +100,45 @@ def compact_part(p: dict) -> dict:
         out['hits'] = [{'type': h.get('type'), 'ratio': h.get('power_ratio')} for h in p['hits']]
     if p.get('dv'):
         out['dv'] = p['dv']
+    if p.get('sstl'):
+        out['sstl'] = p['sstl']
     if eff.get('exitCond') and eff['exitCond'] != 'None':
         out['exit'] = {'cond': eff['exitCond'], 'value': eff.get('exitVal') or [0, 0]}
     if eff.get('limitType') and eff['limitType'] != 'None':
         out['limitType'] = eff['limitType']
     if eff.get('ir'):
         out['irremovable'] = True
+    if p.get('skill_type') == 'ExecuteSkillOnPreTurn' and p.get('sv'):
+        # The public style points to a skill outside the equippable skills list.
+        # Its complete revive effect is specified by the public skill_templates
+        # entry for Tama Session and the corresponding zhTW skill description.
+        triggered = {'label': p['sv']}
+        if p['sv'] == 'MAikawaSkill07':
+            triggered.update(name='炸裂！貝斯獨奏', parts=[
+                {'skillType': 'ReviveDpRate', 'targetType': 'AllyAll', 'power': [0.5, 0]}
+            ])
+        out['triggeredSkill'] = triggered
     # SkillCondition / SkillSwitch / SkillRandom keep their branch skills in strval
     sv = p.get('strval')
     if isinstance(sv, list) and any(isinstance(x, dict) for x in sv):
-        out['branches'] = [compact_skill(s, {}) for s in sv if isinstance(s, dict)]
+        leaves = [s for s in sv if isinstance(s, dict)]
+        out['branches'] = [compact_skill(s, {}) for s in leaves]
+        if len(leaves) > 2 and out['skillType'] in ('SkillCondition', 'SkillSwitch'):
+            conditions = [branch_condition(p['label'], s.get('desc') or '', leaves) for s in leaves]
+            if any(conditions):
+                out['branchConditions'] = conditions
+        if out['skillType'] == 'SkillSwitch':
+            modes = {}
+            for i, leaf in enumerate(leaves):
+                for side in ('a', 'b'):
+                    if leaf['label'].startswith(p['label'] + side):
+                        modes.setdefault(side, []).append(i)
+            if len(modes) == 2 and sum(map(len, modes.values())) == len(leaves):
+                out['switchModes'] = modes
+        if p.get('label') == 'RMurohushiSkill06' and [b['label'] for b in leaves] == [
+                'RMurohushiSkill06aa', 'RMurohushiSkill06ab', 'RMurohushiSkill06ba', 'RMurohushiSkill06bb']:
+            # MasterSkillPart defines 50/50 at the root and at both children.
+            out['branchWeights'] = [0.25, 0.25, 0.25, 0.25]
         rest = [x for x in sv if not isinstance(x, dict) and x not in (-1, None)]
         if rest:
             out['strval'] = rest
@@ -102,10 +169,14 @@ def compact_skill(s: dict, zh: dict) -> dict:
         out['useCond'] = s['iuc_cond']
     if s.get('interval_turn'):
         out['interval'] = s['interval_turn']
-    if s.get('overwrite'):
+    if s.get('overwrite') or (s.get('overwrite') == 0 and s.get('overwrite_cond')):
         out['overwrite'] = s['overwrite']
         if s.get('overwrite_cond'):
             out['overwriteCond'] = s['overwrite_cond']
+    growth = re.search(r'使用するたびにこのスキルの消費SPが(\d+)増加し\(最大(\d+)\)', s.get('desc') or '')
+    if growth:
+        out['spPerUse'] = int(growth[1])
+        out['spUseCap'] = int(growth[2])
     if s.get('hits'):
         out['hits'] = [{'type': h.get('type'), 'ratio': h.get('power_ratio')} for h in s['hits']]
     if s.get('passive'):

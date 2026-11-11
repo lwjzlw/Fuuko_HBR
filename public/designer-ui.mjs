@@ -2,8 +2,9 @@
 import {simulateDesign,emptyTurn,skillChoices} from './sim/designer.mjs';
 import {waveScore} from './boss-model.mjs';
 import {CARDS} from './sim/cards.mjs';
-import {groupAxisRows,renderAxisRows,replayAssumptions} from './planner-axis.mjs';
+import {groupAxisRows,renderAxisRows,replayAssumptions,replayMechanics} from './planner-axis.mjs';
 import {selectableAllyTargets} from './sim/search.mjs';
+import {canLimitDamage} from './sim/hbr/battle.mjs';
 
 const ROUNDS=['main','extra'];
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -27,9 +28,11 @@ export function renderDesigner(env){
   const skillOpts=(u,cur)=>{if(!Number.isInteger(u))return '<option value="">—</option>';
     return skillChoices(party[u]).map(c=>`<option value="${e(c.s)}" ${c.s===cur?'selected':''}>${e(c.name)}${c.sp?` · SP${c.sp}`:''}</option>`).join('');};
   const slots=(path,list,count,pool)=>Array.from({length:count},(_,k)=>{const a=list?.[k]||{};
-    const targets=selectableAllyTargets(party[a.u]?.skills.find(s=>s.label===a.s),a.u,party);
+    const member=party[a.u],skill=member?.skills.find(s=>s.label===a.s);
+    const targets=selectableAllyTargets(skill,a.u,party);
     const targetSelect=targets.length?`<select data-dz-ally="${path}|${k}" aria-label="技能目标"><option value="">自动选队友</option>${targets.map(i=>`<option value="${i}" ${a.target===i?'selected':''}>${name(i)}</option>`).join('')}</select>`:'';
-    return `<span class="slot"><select data-dz-u="${path}|${k}" aria-label="行动者">${memberOpts(a.u,pool)}</select><select data-dz-s="${path}|${k}" aria-label="技能">${skillOpts(a.u,a.s)}</select>${targetSelect}</span>`;}).join('');
+    const limiter=canLimitDamage(member,skill)||a.limiter===true?`<label title="本次主动攻击技能每段伤害为 1。游戏缓存未提供开关状态，逐行动设置；普攻、追击、固定比例伤害未纳入。"><input type="checkbox" data-dz-limiter="${path}|${k}" aria-label="本次主动攻击限伤" ${a.limiter===true?'checked':''}>限伤</label>`:'';
+    return `<span class="slot"><select data-dz-u="${path}|${k}" aria-label="行动者">${memberOpts(a.u,pool)}</select><select data-dz-s="${path}|${k}" aria-label="技能">${skillOpts(a.u,a.s)}</select>${targetSelect}${limiter}</span>`;}).join('');
   const all=party.map((_,i)=>i);
   const rider=party.findIndex(u=>u.passives?.some(p=>p.parts?.some(part=>part.skillType==='SpecialCommandCountUp'&&part.branches?.some(b=>b.label==='BIYamawakiSkill55b'))));
   const commands=(path,list,label='魔界骑兵')=>rider<0?'':`<label class="dz-command">${label}<select data-dz-command="${path}" data-command-owner="${rider}" aria-label="${label}发动次数">${[0,1,2,3].map(v=>`<option value="${v}" ${v===(list?.length||0)?'selected':''}>${v?v+' 次':'不发动'}</option>`).join('')}</select></label>`;
@@ -83,7 +86,6 @@ ${iss.length?`<ul class="compact">${iss.map(x=>`<li class="${x.level==='error'?'
 <p class="compact">伤害分 ${n(sc.damageScore)} + 回合分 ${n(sc.roundScore)}（${res.turns} 回合）+ 难度分 ${n(sc.difficultyScore)} → × 规则 ${sc.multiplier.toFixed(2)} = <b>${n(sc.total)}</b>${res.failed?' <span class="pill-error">（设计中途失败，分数无效）</span>':''}</p>
 <p class="subtle compact">计分按社区遭遇战出分表 / HBR Toolbox。敌人使用主界面“敌方参数”所列数值，DP/HP 底表尚未完成各难度实战校准；可填写已知实测值，修改难度会重建回放。勾选“计溢出”时每阶段伤害 = 画面显示的全部伤害（含击破那一下超出的部分），否则只计实际扣掉的 DP/HP。</p></div>`;
   }
-  const flags=Object.entries(res.flags?.approx||{}).map(([k,v])=>`${e(k)} ×${v}`);
   host.innerHTML=`<div class="split-heading"><h2>排轴设计器 <small class="subtle">手排每回合行动，修改即重放</small></h2>
 <div class="inline"><label>暴击<select id="dz-crit">${[['expected','期望'],['none','不暴击'],['all','全暴击']].map(([k,t])=>`<option value="${k}" ${k===view.crit?'selected':''}>${t}</option>`).join('')}</select></label>
 <label>敌方伤害<select id="dz-vary">${[['1.1','最大（×1.1，保守）'],['1','平均']].map(([k,t])=>`<option value="${k}" ${String(view.vary)===k?'selected':''}>${t}</option>`).join('')}</select></label>
@@ -97,7 +99,7 @@ ${phases.length>1&&view.phase>0?`<p class="compact"><label>进入本阶段前选
 ${ph.turns.map(turnHtml).join('')}
 <div class="inline"><button id="dz-add" type="button">+ 添加回合</button></div>
 ${waveHtml}
-${flags.length?`<details><summary>近似处理（${flags.length}）</summary><p class="compact subtle">${flags.join(' · ')}</p></details>`:''}`;
+${replayMechanics(res.flags,e)}`;
   bindDesigner(env,res);
 }
 
@@ -131,6 +133,8 @@ function bindDesigner(env,res){
     list[k]={u:list[k]?.u,s:s.value};commit();});
   host.querySelectorAll('[data-dz-ally]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzAlly.split('|');const k=Number(parts.pop());const a=listAt(design,P,parts.join('|'))[k];
     if(s.value==='')delete a.target;else a.target=Number(s.value);commit();});
+  host.querySelectorAll('[data-dz-limiter]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzLimiter.split('|');const k=Number(parts.pop());const a=listAt(design,P,parts.join('|'))[k];
+    if(s.checked)a.limiter=true;else delete a.limiter;commit();});
   host.querySelectorAll('[data-dz-f]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzF.split('|');const k=Number(parts.pop());const f=frontAt(design,P,parts.join('|'));
     f[k]=s.value===''?null:Number(s.value);commit();});
   host.querySelectorAll('[data-dz-od]').forEach(s=>s.onchange=()=>{const [ti,key]=s.dataset.dzOd.split('|');const t=design.phases[P].turns[Number(ti)];const l=Number(s.value);

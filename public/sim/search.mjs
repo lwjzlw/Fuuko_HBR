@@ -392,9 +392,9 @@ export function replay(ctx,o,plan){
       case 'od':startOverdrive(st,p.level,p.window);break;
       case 'front':setFront(st,p.units);st.acted=0;break;
       case 'command':useCommand(st,p.u,p.s);break;
-      case 'act':act(st,p.u,p.s,p.target);st.acted|=1<<p.u;break;
+      case 'act':act(st,p.u,p.s,p.target,p.limiter===true);st.acted|=1<<p.u;break;
       case 'extraStart':who=p.who;startExtraTurn(st);break;
-      case 'extra':act(st,p.u,p.s,p.target);break;
+      case 'extra':act(st,p.u,p.s,p.target,p.limiter===true);break;
       case 'extraEnd':endExtraTurn(st,p.who);who=null;break;
       case 'odEnd':endOdRound(st);break;
       case 'end':endPlayerTurn(st,{skipTick:p.skipTick});break;

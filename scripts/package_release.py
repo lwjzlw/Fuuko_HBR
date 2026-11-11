@@ -34,6 +34,7 @@ SCRIPTS = (
     'build-stats.py', 'build-wave-parameters.py', 'followup-hits.json', 'package_release.py', 'release_support.py', 'download_images.py',
 )
 TESTS = (
+    'automatic-skills.test.mjs', 'planner-skill-branches.test.mjs', 'special-status.test.mjs',
     'boss-model.test.mjs', 'box.test.mjs', 'cache-sync.test.mjs', 'catalog.test.mjs',
     'search-axis.test.mjs', 'planner-known-party.test.mjs', 'equipment.test.mjs', 'planner.test.mjs', 'planner-results.test.mjs', 'planner-display.test.mjs', 'progress.test.mjs', 'storage.test.mjs',
     'test_build_bosses.py', 'test_build_skills.py', 'test_build_stats.py', 'test_hbr_app.py',

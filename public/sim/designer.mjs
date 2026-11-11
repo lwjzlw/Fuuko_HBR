@@ -7,7 +7,7 @@
 //         extra:[{u, s, target}…]}                 追加回合
 // action.s：技能 label；'normal' = 普攻（ADMIRAL 为指揮行動）；'' = 不行动
 import {initialState,startTurn,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,
-  usableSkills,useCommand,act,effectiveCost,odCost,setPhase,NORMAL} from './hbr/battle.mjs';
+  usableSkills,useCommand,act,effectiveCost,canLimitDamage,odCost,setPhase,NORMAL} from './hbr/battle.mjs';
 import {applyCard,cardById} from './cards.mjs';
 import {selectableAllyTargets} from './search.mjs';
 
@@ -93,7 +93,7 @@ export function simulateDesign(ctx,o,design){
       if(trace)add({kind:'round',phase:p,turn,round,roundId,...context,
         actors:context.actors||st.units.filter(u=>u.front).map(u=>u.i),
         commands:commands.map(a=>({unit:a.u,label:a.s,skill:st.units[a.u]?.commandSkill?.name||a.s})),
-        planned:(list||[]).filter(a=>a.s).map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s,target:a.target,backup:!!a.backup}))});
+        planned:(list||[]).filter(a=>a.s).map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s,target:a.target,backup:!!a.backup,limiter:a.limiter===true}))});
       if(commands.length)runCommands(commands,{phase:p,turn,round,roundId});
       if(cleared)return;
       const done=new Set();
@@ -108,21 +108,23 @@ export function simulateDesign(ctx,o,design){
         if(a.target!=null&&!selectableAllyTargets(r.skill,a.u,st.units).includes(a.target)){
           issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」的指定队友不可选`);continue;
         }
-        const usable=usableSkills(st,a.u);
+        if(a.limiter===true&&!canLimitDamage(ctx.party[a.u],r.skill)){
+          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」无法开启限伤，请检查限制器是否装备以及是否为主动攻击技能`);continue;
+        }
+        const requested={k:r.k},usable=usableSkills(st,a.u,requested);
         // A generated fallback is optional and may never spend SP, including an Admiral's command.
         if(a.backup&&a.s==='normal'&&(!usable.includes(r.k)||(r.k!==NORMAL&&effectiveCost(st,a.u,r.skill)!==0)))continue;
         if(!usable.includes(r.k)){
-          const cost=r.k===NORMAL?0:effectiveCost(st,a.u,r.skill);
-          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」不可用（SP ${Math.round(u.sp*10)/10} / 需要 ${cost}${u.uses?.[r.skill.label]?'；次数可能已用完':''}）`);
+          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」不可用：${requested.reason||'此轮无法行动'}`);
           o.onUnavailable?.({node:a,phase:p,turn,kind:'skill',choices:usable.map(k=>{
             const sk=ctx.party[a.u].skills[k];
             return {s:k===NORMAL?'normal':sk.label,cost:k===NORMAL?0:effectiveCost(st,a.u,sk)};
           })});
           continue;
         }
-        const before=st.totalDamage,enemyName=st.ctx.enemy.name;
-        act(st,a.u,r.k,a.target);done.add(a.u);
-        add({kind:'act',phase:p,turn,round,roundId,unit:a.u,skill:r.skill.name||r.skill.label,target:a.target,backup:!!a.backup,cost:r.k===NORMAL?0:effectiveCost(st,a.u,r.skill),damage:Math.round(st.totalDamage-before)});
+        const before=st.totalDamage,enemyName=st.ctx.enemy.name,cost=r.k===NORMAL?0:effectiveCost(st,a.u,r.skill);
+        act(st,a.u,r.k,a.target,a.limiter===true);done.add(a.u);
+        add({kind:'act',phase:p,turn,round,roundId,unit:a.u,skill:r.skill.name||r.skill.label,target:a.target,backup:!!a.backup,limiter:a.limiter===true,cost,consume:r.skill.consume||'Sp',damage:Math.round(st.totalDamage-before)});
         if(advance({phase:p,turn,round,roundId,unit:a.u},enemyName)){cleared=true;return;}
       }
     };
@@ -160,8 +162,12 @@ export function simulateDesign(ctx,o,design){
       if(cleared||failed)break;
       if(t.extended)extended++;
       turnNo++;
+      const preTurnLog=st.log?.length||0;
       startTurn(st);
       add({kind:'turn',phase:p,turn:turnNo,label:`第 ${turnNo} 回合${phasesIn.length>1?`（第 ${p+1} 阶段）`:''}`});
+      if(trace)for(const l of st.log.slice(preTurnLog))if(l.t==='autoSkill'){
+        add({kind:'autoSkill',phase:p,turn:turnNo,unit:l.unit,skill:l.skill,skillId:l.label,remaining:l.remaining,label:`${l.skill}（剩余 ${l.remaining} 次）`});
+      }
       const odS=t.odStart||(t.od?.window==='turnStart'?t.od:null),odE=t.odEnd||(t.od?.window==='turnEnd'?t.od:null);
       if(odS?.level&&odS.commandsBefore?.length){
         const at=rows.length,meta={phase:p,turn:turnNo,round:'od1',roundId:trace?roundNo+1:0,beforeOd:true};
@@ -206,7 +212,7 @@ export function skillChoices(member){
 export function designFromPlan(plan,party){
   const turns=[];let t=null,odRound=null,odLeft=0,extraTarget=null,cur=null,lastRound=null,commandsBefore=[];
   const label=(u,k)=>k===NORMAL?'normal':party[u].skills[k]?.label||'';
-  const action=p=>Number.isInteger(p.target)?{u:p.u,s:label(p.u,p.s),target:p.target}:{u:p.u,s:label(p.u,p.s)};
+  const action=p=>({u:p.u,s:label(p.u,p.s),...(Number.isInteger(p.target)?{target:p.target}:{}),...(p.limiter===true?{limiter:true}:{})});
   for(const p of plan){
     switch(p.k){
       case 'turn':t=emptyTurn();turns.push(t);odRound=null;odLeft=0;lastRound=null;commandsBefore=[];break;
