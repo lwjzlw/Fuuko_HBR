@@ -1,44 +1,18 @@
-# Local state, private snapshots, assistant history, and reproducible scratch work.
-/work/
-/tmp/
-/release/
-/dist/
-/status/
-/agent_records/
-/AGENTS.md
-/STATUS.md
-/方案.md
-/导入可行性.md
-/排轴算法.md
-/校准清单.md
-/验证记录.md
-/.codex/
-/.claude/
-/.env
-/.env.*
 __pycache__/
 *.py[cod]
 node_modules/
 .venv/
 *.log
 *.tmp
-*.bak
 *.download
+
+# 本机数据（默认存在用户目录，这几项只防误放进仓库）
 /data/
 /local-data/
 /archive.json
 /runtime.json
 /backups/
 /snapshots/
-# Obsolete local launchers; current entry point is hbr_app.py.
-/server.mjs
-/Start.ps1
-# Downloadable game artwork is excluded from the default source repository.
-/public/assets/hbr/
-# The exporter supplies generic icons, without changing local artwork.
-/public/hbr-icon.png
-/public/hbr.ico
 
-# Generic release icons are maintained public assets.
-!/public/hbr-icon.png
-!/public/hbr.ico
+# 卡面图片按需下载：python -B scripts/download_images.py
+/public/assets/hbr/

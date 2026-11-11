@@ -4,8 +4,8 @@
     python  hbr_app.py --serve               # 只启动服务（风子工作台标签页或调试用）
     python  hbr_app.py --serve --data-dir D  # 风子工作台按说明文件传入数据目录
 
-个人档案存在数据目录的 archive.json。数据目录优先级：--data-dir > HBR_DATA_DIR > 原有的
-同盘原有 AppData/HBRPlanner（仅维护目录）> %LOCALAPPDATA%/FuukoWorkbenches/hbr。
+个人档案存在数据目录的 archive.json。数据目录优先级：--data-dir > 环境变量 HBR_DATA_DIR >
+%LOCALAPPDATA%/FuukoWorkbenches/hbr。
 每次覆盖前把旧档案复制到 backups/（保留最近 BACKUP_KEEP 份）；导入/批量等重要操作另存 snapshots/。
 """
 from __future__ import annotations
@@ -33,7 +33,6 @@ VERSION = "0.12.2"
 PORT = 8787
 BACKUP_KEEP = 40
 SNAPSHOT_KEEP = 60
-LEGACY_DATA_DIR = Path(HERE.anchor) / "AppData" / "HBRPlanner"
 ICON = HERE / "public" / "hbr.ico"
 _REASON = re.compile(r"[^0-9A-Za-z_\-\u4e00-\u9fff]+")
 
@@ -43,10 +42,6 @@ def data_dir(explicit: Path | None = None) -> Path:
         return Path(explicit).expanduser().resolve()
     if os.environ.get("HBR_DATA_DIR"):
         return Path(os.environ["HBR_DATA_DIR"])
-    # Maintenance installs retain their original archive. Clean source exports
-    # deliberately do not discover an unrelated user's archive on the same drive.
-    if not (HERE / "SOURCE-MANIFEST.json").is_file() and LEGACY_DATA_DIR.is_dir():
-        return LEGACY_DATA_DIR
     return Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share") / "FuukoWorkbenches" / APP_ID
 
 
