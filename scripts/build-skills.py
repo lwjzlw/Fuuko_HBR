@@ -163,6 +163,9 @@ def compact_skill(s: dict, zh: dict) -> dict:
         'restricted': bool(s.get('is_restricted')),
         'parts': [compact_part(p) for p in s.get('parts') or []],
     }
+    # Master is_adv: this skill may spend more SP than it has if the starting balance is nonnegative.
+    if s.get('consume_type') == 'Sp' and s.get('is_adv'):
+        out['allowSpOverdraft'] = True
     if s.get('cond'):
         out['cond'] = s['cond']
     if s.get('iuc_cond'):

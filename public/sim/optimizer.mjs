@@ -692,7 +692,11 @@ function setup(input,onProgress=()=>{},taskOnly=false){
       members:ms,team:party.map(u=>`${u.name}〈${u.styleName}〉`)});
     const out=!j.invalid||mc.successes?[record(j,mc,false)]:[];
     if(replayOnly)return out[0]||null;
-    if(repair&&opts.fixedTeam&&nPhases>1&&mc.onPlan<0.8&&j.cleared>=Math.max(1,nPhases-2)){
+    // A legacy plan can fail on its very first menu. Keep its team and try
+    // affordable replacements even when that prevented clearing later phases.
+    const cannotPay=repair&&j.invalid&&j.res.rows.some(r=>r.kind==='round'&&r.planned?.some(a=>
+      a.selectionError&&a.selectionCost>(a.selectionCurrency==='EP'?a.selectionEp:a.selectionSp)));
+    if(repair&&mc.onPlan<0.8&&(cannotPay||opts.fixedTeam&&nPhases>1&&j.cleared>=Math.max(1,nPhases-2))){
       for(const design of repairDesign(j.sctx,j.design,{maxTurns:opts.maxTurns||6})){
         const revised=judgeDesign(party,design);if(!revised.elementMatch)continue;
         const stats=rate(revised);
@@ -919,7 +923,8 @@ function setup(input,onProgress=()=>{},taskOnly=false){
     finalists.push(island[0]);
   }
   let fdone=0;
-  const tasks=[...finalists.map((f,fi)=>({type:'final',f,fi})),...incumbentInputs.map((incumbent,i)=>({type:'incumbent',incumbent,repair:opts.fixedTeam&&i<2}))];
+  const tasks=[...finalists.map((f,fi)=>({type:'final',f,fi})),...incumbentInputs.map((incumbent,i)=>({type:'incumbent',incumbent,
+    repair:i<2&&(opts.fixedTeam||longKind==='axis'||longKind==='explore')}))];
   if(longKind==='transfer'&&incumbentInputs.length&&!keepLoadout){
     // Test the same executable axis with changed inventory. A strong known
     // route need not be rediscovered by a beam before a loadout can compete.

@@ -48,6 +48,20 @@ export function groupAxisRows(rows){
 
 export function renderAxisRows(rounds,{e,n,party}){
   const name=i=>party[i]?.name||'#'+i;
+  const resource=a=>{
+    const currency=a.selectionCurrency,value=currency==='EP'?a.selectionEp:a.selectionSp;
+    const selected=Number.isFinite(value)&&Number.isFinite(a.selectionCost)
+      ?`<small>选招时 ${e(currency)} ${n(value)} · 需 ${n(a.selectionCost)}</small>`:'';
+    const exception=a.selectionAllowance?`<small>${e(a.selectionAllowance)}</small>`:'';
+    const error=a.selectionError||a.executionError;
+    return selected+exception+(error?`<small class="pill-error">${e(error)}</small>`:'');
+  };
+  const outcome=a=>{
+    const currency=a.consume==='Ep'?'EP':'SP',after=(currency==='EP'?a.ep:a.sp)?.[a.unit];
+    const changed=Number.isFinite(a.selectionCost)&&Number.isFinite(a.cost)&&a.selectionCost!==a.cost;
+    return `扣盾/血 ${n(a.damage||0)}`+(changed?` · 实耗 ${currency} ${n(a.cost)}`:'')
+      +(after!=null?` · 行动后 ${currency} ${n(Math.round(after*10)/10)}`:'');
+  };
   const odAction=v=>`<div class="axis-od-action" data-od-window="${e(v.window)}" aria-label="${e(v.label)}"><b>${v.window==='turnEnd'?'后开 OD':'前开 OD'}</b><small>Lv.${e(String(v.level))}</small></div>`;
   const commandAction=(used,requested)=>{
     const planned=Math.max(used.length,requested||0);
@@ -59,7 +73,7 @@ export function renderAxisRows(rounds,{e,n,party}){
     // 以计划顺序排三格；提前击杀仍保留后两人的位置，不能伪装成已行动。
     const planned=r.planned||[],used=new Set();
     const cells=planned.map(p=>{const at=r.actions.findIndex((a,i)=>!used.has(i)&&a.unit===p.unit&&a.skill===p.skill);
-      if(at>=0){used.add(at);return {...r.actions[at],executed:true};}
+      if(at>=0&&!p.selectionError&&!p.executionError){used.add(at);return {...p,...r.actions[at],executed:true};}
       return {...p,executed:false};});
     r.actions.forEach((a,i)=>{if(!used.has(i))cells.push({...a,executed:true});});
     for(const unit of r.actors||[])if(!cells.some(a=>a.unit===unit))cells.push({unit,executed:false});
@@ -75,7 +89,7 @@ export function renderAxisRows(rounds,{e,n,party}){
         +commandAction(commands.filter(c=>!c.beforeOd),r.commands?.length):'';
       return `<li class="axis-row axis-${r.round==='extra'?'extra':r.round==='main'?'main':'inod'}" data-round="${e(r.round)}">
 <div class="axis-t"><b>T${r.turn}</b><span>${e(roundLabel(r.round))}${ci?'（续）':''}</span>${r.parentRound?`<small>${e(roundLabel(r.parentRound))} 内</small>`:''}</div>
-<div class="axis-body"><div class="axis-action-flow">${before}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${a.backup?'备用 · ':''}${e(a.skill||'未安排行动')}${a.limiter?' · 限伤开启':''}${Number.isInteger(a.target)?' → '+e(name(a.target)):''}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
+<div class="axis-body"><div class="axis-action-flow">${before}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${a.backup?'备用 · ':''}${e(a.skill||'未安排行动')}${a.limiter?' · 限伤开启':''}${Number.isInteger(a.target)?' → '+e(name(a.target)):''}</span>${resource(a)}<small>${a.executed?outcome(a):a.skill?`未执行${stopped&&!a.selectionError&&!a.executionError?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
 ${events.length?`<div class="axis-events">${events.map(v=>`<span class="axis-event axis-${v.kind}">${v.unit!=null?e(name(v.unit))+' · ':''}${e(v.label)}</span>`).join('')}</div>`:''}</div></li>`;
     });
   }).join('')}</ol>`;
@@ -92,6 +106,6 @@ export function axisView({e,n,party,phases,statusTypes,design,critMode='expected
 ${cards.length?`<p class="axis-card">${cards.map(c=>e(c.label)).join('　')}</p>`:''}${renderAxisRows(rs,{e,n,party})}</div>`;
   }).join('');
   const errors=res.issues.filter(x=>x.level!=='warn');
-  return {html:`<p class="subtle compact axis-assumptions">${e(replayAssumptions(options.critMode))} 每次行动显示所有目标实际扣除 DP / HP 的合计，不是单个敌人的伤害跳字。</p>`+html+(errors.length?`<details class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:'')+replayMechanics(res.flags,e),
-    summary:{turns:res.turns,cleared:res.phases.filter(x=>x.cleared).length,phases:phases.length,failed:!!res.failed,damage:res.phases.reduce((a,x)=>a+(x.damage||0),0)}};
+  return {html:`<p class="subtle compact axis-assumptions">${e(replayAssumptions(options.critMode))} 三人先选招，再依序行动；本轮收到的 SP 在下一次选招时可用。每次行动显示所有目标实际扣除 DP / HP 的合计，不是单个敌人的伤害跳字。</p>`+html+(errors.length?`<details open class="axis-issues"><summary>${errors.length} 处行动在模拟里无法执行</summary><ul class="compact">${errors.slice(0,20).map(x=>`<li>T${x.turn}：${e(x.msg)}</li>`).join('')}</ul></details>`:'')+replayMechanics(res.flags,e),
+    summary:{invalid:errors.length>0,turns:res.turns,cleared:res.phases.filter(x=>x.cleared).length,phases:phases.length,failed:!!res.failed,damage:res.phases.reduce((a,x)=>a+(x.damage||0),0)}};
 }

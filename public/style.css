@@ -396,6 +396,7 @@ button.link:hover{text-decoration:underline}
 .axis-inod .axis-act { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--paper)); }
 .axis-extra .axis-t { color: var(--ok); }
 .axis-skipped { border-style: dashed; color: var(--text-3); }
+.axis-act small.pill-error { color: var(--danger); }
 .axis-empty { margin: auto 0; }
 .axis-events { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .axis-event { padding: 2px 8px; border-radius: 5px; font-size: 11px; background: var(--surface-2); overflow-wrap: anywhere; }

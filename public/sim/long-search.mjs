@@ -2,7 +2,7 @@ import {waveScore} from '../boss-model.mjs';
 import {partyContextKey,optimizationScope} from '../planner-results.mjs';
 import {normalizeMinSuccess,normalizeSuccessBasis,resultLimit,rawIdentity} from './optimizer-options.mjs';
 
-export const LONG_SEARCH_VERSION='joint-1';
+export const LONG_SEARCH_VERSION='joint-2';
 export const longMinutes=value=>Math.max(1,Math.min(720,Math.trunc(Number(value)||60)));
 const phaseNames={baseline:'复评起始轴',transfer:'沿同一轴换装与换人',axis:'改进已有行动轴',explore:'搜索阵容与排轴',validate:'独立复核入围轴'};
 

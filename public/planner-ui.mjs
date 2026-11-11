@@ -306,7 +306,7 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
     const failedAttempt=attempt&&(!rows.length||!rows.some(x=>x.candidate.mc.success>0));
     const failureText=failedAttempt?`<p class="subtle compact">本次复评的参考轴在期望伤害下清了 ${attempt.cleared}/${attempt.phases} 个阶段。随机重放 ${attempt.mc.n} 次，照轴完成 ${pct(attempt.mc.onPlan)}，含续打通关 ${pct(attempt.mc.success)}。${Object.entries(attempt.mc.fails||{}).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([reason,count])=>e(reason)+' '+count+' 次').join('，')}</p>`:'';
     const currentBelow=!summaryStale&&summary&&optOpt.minSuccess>0&&!(satisfiesThreshold(summary,optOpt))?`<p class="pill-error">当前采用方案低于所选成功率下限。可从合格候选中重新选择，或重新搜索。</p>`:'';
-    const staleNote=resultStale?'<p class="pill-error">候选使用了旧的战斗参数。重新搜索可按当前参数复评。</p>':
+    const staleNote=resultStale?'<p class="pill-error">候选使用了旧版战斗规则或敌方参数，旧评分已隐藏。请重新搜索。</p>':
       summaryStale?'<p class="subtle compact">当前采用的轴或配置已变更，其旧评分已隐藏。</p>':'';
     const chips=rows.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${rows.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
     <div class="pl-plans">${rows.map(({candidate:t,index:i})=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
@@ -333,7 +333,7 @@ ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p clas
       ${wave&&scores.p10!=null?`<div><strong>${n(Math.round(scores.p10))}</strong><span>通关分数第 10 百分位</span></div>`:''}
       <div><strong>${s.turnsMedian??s.turns??'—'}</strong><span>回合（中位）</span></div>
       ${s.ruleNames?`<div><strong class="pl-rule-name">${e(s.ruleNames.join('、')||'不选')}</strong><span>特殊规则</span></div>`:''}
-    </div>`:sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
+    </div>`:sum?.invalid?'<p class="pill-error">当前回放有无法执行的行动；请检查下方排轴。</p>':sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
     return `<div class="split-heading"><h2 title="${e(s.label||'')}">当前方案${summary?` <small class="subtle">${s.newTeam?'新组的队伍 · ':''}${s.at?new Date(s.at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 求出':''}</small>`:''}</h2>
   ${hasAxis?'<button id="pl-edit" class="quiet" type="button">逐回合修改</button>':''}</div>
 ${staleNote}${longNote}${thresholdNote}${failureText}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}

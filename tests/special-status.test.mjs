@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {act,buildEnemy,buildParty,cloneState,effectiveCost,endExtraTurn,endOdRound,endPlayerTurn,initialState,memberStats,previewAttack,setPhase,startExtraTurn,startOverdrive,startTurn,stateKey,usableSkills} from '../public/sim/hbr/battle.mjs';
+import {act,buildEnemy,buildParty,canPaySkillCost,cloneState,effectiveCost,endExtraTurn,endOdRound,endPlayerTurn,initialState,memberStats,NORMAL,previewAttack,setPhase,startExtraTurn,startOverdrive,startTurn,stateKey,usableSkills} from '../public/sim/hbr/battle.mjs';
 
 const read=path=>JSON.parse(readFileSync(new URL(path,import.meta.url),'utf8'));
 const data={catalog:read('../public/data/catalog.json'),skills:read('../public/data/skills.json')};
@@ -19,6 +19,29 @@ const skill=(st,i,label)=>{const k=st.ctx.party[i].skills.findIndex(s=>s.label==
 const cost=(st,i,label)=>effectiveCost(st,i,st.ctx.party[i].skills[skill(st,i,label)]);
 const cast=(st,i,label)=>act(st,i,skill(st,i,label));
 const effect=(st,i,type)=>st.units[i].effects.find(e=>e.type===type||e.status===type);
+
+test('标记可透支的实卡在零 SP 可以选，负 SP 不能再借；速弹不能借 EP',()=>{
+  const skills=Object.entries(data.skills.styles).flatMap(([id,style])=>style.skills.map(s=>[id,s]));
+  const loans=skills.filter(([,s])=>s.allowSpOverdraft),cathy=loans.find(([,s])=>s.label==='CathyBSkill51');
+  assert.ok(loans.length>0);assert.ok(cathy);
+  assert.deepEqual(loans.map(([,s])=>s.label).sort(),skills.filter(([,s])=>s.desc.includes('只要SP在0以上就能使用')).map(([,s])=>s.label).sort());
+  for(const [id,s] of loans){
+    const st=setup([id]),k=skill(st,0,s.label);st.units[0].sp=0;
+    assert.equal(s.consume,'Sp');assert.ok(canPaySkillCost(st,0,k),s.label);
+    st.units[0].sp=-1;assert.ok(!canPaySkillCost(st,0,k),s.label);
+  }
+  const st=setup([cathy[0],'NNanase03','BIYamawaki08','CSkopovskaya08']),detail={};
+  const song=skill(st,0,'CathyBSkill51');st.units[0].sp=0;
+  assert.ok(usableSkills(st,0).includes(song));assert.ok(canPaySkillCost(st,0,song,detail));
+  assert.equal(detail.allowance,'技能自带：SP 非负时可透支');act(st,0,song);assert.equal(st.units[0].sp,-12);
+  assert.ok(canPaySkillCost(st,0,NORMAL,detail));assert.equal(detail.allowance,'普通攻击不耗 SP');
+  st.units[2].sp=0;const paid=st.ctx.party[2].skills.findIndex(s=>s.sp>0&&s.consume==='Sp'&&!s.allowSpOverdraft);
+  assert.ok(paid>=0);assert.ok(canPaySkillCost(st,2,paid,detail));assert.equal(detail.allowance,'速弹：SP 非负时可透支');
+  st.units[3].sp=-1;assert.ok(canPaySkillCost(st,3,skill(st,3,'CSkopovskayaSkill55'),detail));
+  assert.equal(detail.allowance,'负 SP 专用零费技能');
+  const ep=skill(st,1,'NNanaseSkill51');st.units[1].ep=6;st.units[1].sp=20;
+  assert.ok(!canPaySkillCost(st,1,ep,detail));assert.equal(detail.currency,'EP');assert.equal(detail.allowance,undefined);
+});
 
 test('水濑莓冰暗技能共享无敌盾判定，救盾才扣次数，受击与技能分别叠反击',()=>{
   const st=setup(['IMinase08'],enemy('X',5000));startTurn(st);

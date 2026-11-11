@@ -1,8 +1,8 @@
 // 排轴搜索（束搜索），建在 hbr/battle.mjs（社区计算器的回合与伤害规则）之上。
-// 每个行动轮分三步展开：第一步同时决定“前排三人 + 第一个行动者与技能”，之后两步决定其余两人；完全相同的状态合并。
+// 每轮先固定前卫三人选招时的可用技能，再依行动顺序展开、扣费并结算效果。
 // OD 有两个发动时机（同 Planner）：回合开始（先 OD 轮再普通轮）或回合结束（普通轮后接 OD 轮，再敌方行动）。
 // 追加回合：获得追加回合的成员单独再行动一轮（不加 SP）。最终排名用真实评价（积分挑战用计分公式）。
-import {setPhase,initialState,cloneState,startTurn,odCost,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,availableCommands,useCommand,usableSkills,canLimitDamage,act,bestTurnDamage,stateKey,NORMAL} from './hbr/battle.mjs';
+import {setPhase,initialState,cloneState,startTurn,odCost,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,availableCommands,useCommand,usableSkills,canPaySkillCost,canLimitDamage,act,bestTurnDamage,stateKey,NORMAL} from './hbr/battle.mjs';
 import {scoreAttackScore,waveDamageScore} from '../boss-model.mjs';
 
 export const OBJECTIVES={score:'积分挑战高分',minTurns:'最少回合击破',maxDamage:'单回合最大伤害'};
@@ -134,7 +134,9 @@ function searchStateKey(s){
     const effects=x===s.enemy?null:x.effects.map(({id,...effect})=>effect);
     return [x.hp,x.dp,x.dr,x.ptr,x.once,effects];
   });
-  return stateKey(s)+'|'+JSON.stringify([s.odWindow,s.extraActed||0,vitals,enemies]);
+  const acted=s.extraWho?s.extraActed:s.acted;
+  const remaining=s.killedTurn?null:s.roundChoices?.map((skills,i)=>(acted&(1<<i))?null:skills);
+  return stateKey(s)+'|'+JSON.stringify([s.odWindow,s.extraActed||0,vitals,enemies,remaining]);
 }
 function setupBranch(sorted,o){
   const first=sorted[0],actor=(((o.seed??0)>>>0)+first.turn+first.plan.length)%first.units.length;
@@ -181,7 +183,7 @@ function prune(list,o,width){
       const count=s.units.filter(u=>u.effects.some(e=>e.type==='yamawakiMinion')).length;
       if(!count)continue;
       const user=s.units[actor];
-      const ready=count===6&&usableSkills(s,actor).includes(skill);
+      const ready=count===6&&(s.roundChoices?.[actor]||usableSkills(s,actor)).includes(skill);
       const nextAction=user.extra>0||user.front&&!(s.acted&1<<actor);
       const value=count*4+Number(ready)*2+Number(nextAction);
       if(value>best){reserve=s;best=value;}
@@ -249,8 +251,16 @@ export function selectableAllyTargets(skill,actor,members){
     return member.down||(mode===2&&slot===actor)?[]:[slot];
   });
 }
+// Capture the menu once after selecting the front and using independent commands.
+// Descendants may execute in any order, sharing this immutable set of choices.
+function lockRoundChoices(state,actors){
+  const choices=[];
+  for(const i of actors)choices[i]=usableSkills(state,i);
+  state.roundChoices=choices;
+}
 function appendActions(next,state,actors,kind,stats){
-  for(const u of actors)for(const k of usableSkills(state,u)){
+  for(const u of actors)for(const k of state.roundChoices[u]){
+    if(!canPaySkillCost(state,u,k))continue;
     const skill=state.ctx.party[u].skills[k];
     const targets=allyTargetMode(skill)?selectableAllyTargets(skill,u,state.units):[undefined];
     for(const target of targets){
@@ -278,10 +288,9 @@ function expandRound(beam,o,stats){
     for(const set of frontSets){
       if(set.some(i=>s.units[i].down)&&alive.length>=set.length)continue; // 倒下的成员不上前卫
       const base=child(s,{k:'front',units:set});setFront(base,set);base.acted=0;
-      if(!o.hasCommands)appendActions(next,base,set,'act',stats);
-      else for(const prefix of commandPrefixes(base,stats)){
+      for(const prefix of o.hasCommands?commandPrefixes(base,stats):[base]){
         if(prefix.killedTurn)next.push(prefix);
-        else appendActions(next,prefix,set,'act',stats);
+        else{lockRoundChoices(prefix,set);appendActions(next,prefix,set,'act',stats);}
       }
     }
   }
@@ -296,6 +305,7 @@ function expandRound(beam,o,stats){
     }
     beam=step===1?pruneMidRound(next,o):prune(next,o,o.beam);
   }
+  for(const s of beam)s.roundChoices=null;
   return beam;
 }
 
@@ -306,6 +316,7 @@ function expandExtra(beam,o,stats){
   if(!todo.length)return beam;
   let cur=todo.map(s=>{const c=child(s,{k:'extraStart',who:pendingExtra(s)});c.extraWho=pendingExtra(s);startExtraTurn(c);return c;});
   if(o.hasCommands)cur=cur.flatMap(s=>commandPrefixes(s,stats));
+  for(const s of cur)lockRoundChoices(s,s.extraWho);
   for(let step=0;step<3;step++){
     const next=[];
     for(const s of cur){
@@ -315,7 +326,7 @@ function expandExtra(beam,o,stats){
     }
     cur=prune(next,o,o.beam);
   }
-  for(const s of cur){s.plan=s.plan.concat([{k:'extraEnd',who:s.extraWho}]);endExtraTurn(s,s.extraWho);s.extraWho=null;s.extraActed=0;s.h=undefined;}
+  for(const s of cur){s.plan=s.plan.concat([{k:'extraEnd',who:s.extraWho}]);endExtraTurn(s,s.extraWho);s.extraWho=null;s.extraActed=0;s.roundChoices=null;s.h=undefined;}
   return prune([...out,...cur],o,o.beam);
 }
 
@@ -446,17 +457,30 @@ function rootOf(ctx,o,flags,trace=false){
 /** 按 plan 重放并记录详细日志（模拟是确定性的）。 */
 export function replay(ctx,o,plan){
   const st=rootOf(ctx,o,null,o.trace!==false);
-  let who=null;
-  for(const p of plan){
+  for(let i=0;i<plan.length;i++){
+    const p=plan[i];
     switch(p.k){
       case 'turn':startTurn(st);break;
       case 'od':startOverdrive(st,p.level,p.window);break;
       case 'front':setFront(st,p.units);st.acted=0;break;
       case 'command':useCommand(st,p.u,p.s);break;
-      case 'act':act(st,p.u,p.s,p.target,p.limiter===true);st.acted|=1<<p.u;break;
-      case 'extraStart':who=p.who;startExtraTurn(st);break;
-      case 'extra':act(st,p.u,p.s,p.target,p.limiter===true);break;
-      case 'extraEnd':endExtraTurn(st,p.who);who=null;break;
+      case 'act':case 'extra':{
+        let end=i;
+        while(end<plan.length&&plan[end].k===p.k){
+          const a=plan[end++],requested={k:a.s};
+          if(!usableSkills(st,a.u,requested).includes(a.s))throw Error(`第 ${st.turn} 回合，${ctx.party[a.u].name} 选招时：${requested.reason||'技能不可用'}`);
+        }
+        for(let j=i;j<end&&!st.killedTurn;j++){
+          const a=plan[j];
+          const charge={};
+          if(!canPaySkillCost(st,a.u,a.s,charge))throw Error(`第 ${st.turn} 回合，${ctx.party[a.u].name} 扣费时：${charge.reason}`);
+          act(st,a.u,a.s,a.target,a.limiter===true);
+          if(p.k==='act')st.acted|=1<<a.u;
+        }
+        i=end-1;break;
+      }
+      case 'extraStart':startExtraTurn(st);break;
+      case 'extraEnd':endExtraTurn(st,p.who);break;
       case 'odEnd':endOdRound(st);break;
       case 'end':endPlayerTurn(st,{skipTick:p.skipTick});break;
     }

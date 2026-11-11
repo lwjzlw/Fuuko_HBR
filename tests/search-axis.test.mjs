@@ -10,6 +10,85 @@ import {optimizerInput} from './fixtures/optimizer-input.mjs';
 const oneTurn={maxTurns:1,beam:4,critMode:'none',objective:'minTurns',damageNorm:1e6,allowOd:false,top:1};
 const skillData=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url),'utf8'));
 
+function spFeedFixture(cost=9){
+  const input=optimizerInput({count:6}),party=buildParty(input.base,input.data);
+  const feed=Object.values(skillData.styles).flatMap(s=>s.skills).find(s=>s.label==='BIYamawakiSkill06'); // 夢的邊際: 6 SP to another ally
+  const finisher=party[1].skills[0];
+  finisher.sp=cost;finisher.parts[0].power=[1e6,1e6];
+  for(const member of party)member.skills=[];
+  party[0].skills=[{...feed,level:1}];party[0].initialSp=3;
+  party[1].skills=[finisher];
+  const enemy={...input.target.phases[0].enemies[0],hp:1e5,maxHp:1e5};
+  return {party,enemy,phases:[{enemies:[enemy]}],statusTypes:{}};
+}
+
+test('a real 6 SP transfer cannot buy a 9 SP finisher in the same action group, but funds the next turn',()=>{
+  const ctx=spFeedFixture(),opts={...oneTurn,beam:12};
+  const turn={k:'turn'},front={k:'front',units:[0,1,2]},gift={k:'act',u:0,s:0,target:1},hit={k:'act',u:1,s:0};
+  assert.throws(()=>replay(ctx,opts,[turn,front,gift,hit]),/选招时：SP不足（现有 3，需要 9）/);
+  assert.equal(search(ctx,opts).plans.length,0);
+  const best=search(ctx,{...opts,maxTurns:2}).plans[0];
+  assert.equal(best?.killedTurn,2);
+  const t2=best.plan.findLastIndex(p=>p.k==='turn');
+  assert.ok(best.plan.slice(0,t2).some(a=>a.k==='act'&&a.u===0&&a.s===0&&a.target===1));
+  assert.ok(best.plan.slice(t2).some(a=>a.k==='act'&&a.u===1&&a.s===0));
+  assert.equal(replay(ctx,opts,best.plan).killedTurn,2);
+  const design=designFromPlan(best.plan,ctx.party);
+  assert.equal(monteCarlo(ctx,{extendTurns:0},design,{n:4,seed:97}).onPlan,1);
+});
+
+test('extra actions lock SP again after the normal group',()=>{
+  const ctx=spFeedFixture(),opts={...oneTurn,beam:12};
+  ctx.party=ctx.party.slice(0,3);
+  ctx.party[2].skills=[{label:'extra',sp:0,consume:'Sp',uses:-1,parts:[{skillType:'AdditionalTurn',targetType:'AllyFront'}]}];
+  const turn={k:'turn'},front={k:'front',units:[0,1,2]},grant={k:'act',u:2,s:0};
+  const gift={u:0,s:0,target:1},hit={u:1,s:0},extra={k:'extraStart',who:[0,1,2]};
+  assert.throws(()=>replay(ctx,opts,[turn,front,grant,extra,{k:'extra',...gift},{k:'extra',...hit}]),/现有 3，需要 9/);
+  assert.equal(replay(ctx,opts,[turn,front,{k:'act',...gift},grant,extra,{k:'extra',...hit}]).killedTurn,1);
+  const best=search(ctx,opts).plans[0];
+  assert.ok(best?.plan.some(a=>a.k==='extra'&&a.u===1&&a.s===0));
+  assert.equal(replay(ctx,opts,best.plan).killedTurn,1);
+  ctx.party[0].skills[0].cond='IsAdditionalTurn()';
+  assert.equal(search(ctx,opts).plans.length,0);
+});
+
+test('a legal free scythe cannot borrow 17 SP when an earlier kill removes its discount',()=>{
+  const {party:full,enemy}=spFeedFixture(),party=full.slice(0,3);
+  for(const member of party)member.skills=[];
+  const scythe=Object.values(skillData.styles).flatMap(s=>s.skills).find(s=>s.label==='BIYamawakiSkill54'); // 信念之鐮
+  party[1].skills=[{...scythe,level:1}];
+  const foes=[{...enemy,label:'down',hp:1,maxHp:1},{...enemy,label:'standing',hp:9000,maxHp:9000}];
+  const ctx={party,enemy:foes[0],statusTypes:{}},st=initialState(party,foes[0],oneTurn);
+  setPhase(st,foes);st.enemy.breakDownTurns=1;
+  const opts={...oneTurn,rootState:st,beam:12},plan=[{k:'turn'},{k:'front',units:[0,1,2]},{k:'act',u:0,s:-1},{k:'act',u:1,s:0}];
+  assert.throws(()=>replay(ctx,opts,plan),/扣费时.*SP不足/);
+  assert.equal(search(ctx,opts).plans.length,0);
+  st.units[1].sp=15; // turn start brings this to 17
+  assert.equal(replay(ctx,opts,plan).units[1].sp,0);
+  const best=search(ctx,opts).plans[0];
+  assert.equal(best?.killedTurn,1);
+  assert.equal(replay(ctx,opts,best.plan).units[1].sp,0);
+});
+
+test('opening OD grants SP before locking that OD group; feeding during it only funds a later group',()=>{
+  const turn={k:'turn'},front={k:'front',units:[0,1,2]},gift={k:'act',u:0,s:0,target:1},hit={k:'act',u:1,s:0};
+  for(const window of ['turnStart','turnEnd']){
+    const ctx=spFeedFixture(14),root=initialState(ctx.party,ctx.enemy,oneTurn);root.od=100;
+    const opts={...oneTurn,allowOd:true,odWindows:[window],rootState:root,beam:12};
+    const od={k:'od',level:1,window};
+    assert.throws(()=>replay(ctx,opts,[turn,od,front,gift,hit]),/现有 8，需要 14/);
+    const legal=window==='turnStart'?[turn,od,front,gift,{k:'odEnd'},front,hit]:[turn,front,gift,od,front,hit];
+    assert.equal(replay(ctx,opts,legal).killedTurn,1);
+    const best=search(ctx,opts).plans[0];
+    assert.ok(best?.plan.some(a=>a.k==='od'&&a.window===window));
+    assert.equal(replay(ctx,opts,best.plan).killedTurn,1);
+  }
+  const ctx=spFeedFixture(21),root=initialState(ctx.party,ctx.enemy,oneTurn);root.od=200;
+  const setup=[turn,{k:'od',level:2,window:'turnStart'},front,gift];
+  assert.throws(()=>replay(ctx,{...oneTurn,rootState:root},[...setup,hit]),/现有 15，需要 21/);
+  assert.equal(replay(ctx,{...oneTurn,rootState:root},[...setup,{k:'odEnd'},front,hit]).killedTurn,1);
+});
+
 test('action-cost passives validate the actual skill and do not buff a later expensive attack',()=>{
   const input=optimizerInput({count:6}),party=buildParty(input.base,input.data);
   const passive=skillData.styles.BIYamawaki08.passives.find(p=>p.label==='Passive.ConsumeSpAttackUp03');

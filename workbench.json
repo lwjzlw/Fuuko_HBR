@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "hbr",
   "name": "HBR 研究室",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "requires": { "host_api": 1 },
   "description": "炽焰天穹的卡面 box 与突破记录、一键导出 box 图，以及排轴与 Boss 资料。",
   "category": "游戏",

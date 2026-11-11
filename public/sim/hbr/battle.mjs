@@ -1199,8 +1199,23 @@ export function effectiveCost(st,i,s){
 function skillElement(s){const parts=(s.parts||[]).flatMap(p=>p.branches?p.branches.flatMap(b=>b.parts||[]):[p]);const p=parts.find(x=>(x.elements||[]).length);return p?elementOf(p):null;}
 const isEX=s=>s.isEX??/Skill5\d/.test(s.label||'');
 function powerTable(part,skill){const p=part.power||[0,0],g=part.growth||[0,0],n=Math.max(1,skill?.maxLevel||1),fixed=!p[1];const min=[],max=[];for(let lv=1;lv<=n;lv++){min.push(p[0]*(1+(g[0]||0)*(lv-1)));max.push((fixed?p[0]:p[1])*(1+(g[fixed?0:1]||0)*(lv-1)));}return {min,max};}
-const zeroSpOk=s=>/Sp\(\)\s*>=\s*0/.test(s.useCond||'')||/Sp\(\)\s*>=\s*0/.test(s.cond||'');
+const zeroSpOk=s=>s.allowSpOverdraft===true||/Sp\(\)\s*>=\s*0/.test(s.useCond||'')||/Sp\(\)\s*>=\s*0/.test(s.cond||'');
 const shredding=st=>st.units.some(u=>u.effects.some(e=>e.status==='Shredding'));
+// Shared by the input menu and actual payment. No skill condition or use count is rechecked at payment.
+export function canPaySkillCost(st,i,k,detail){
+  const u=st.units[i],s=st.ctx.party[i].skills[k],ep=s?.consume==='Ep',available=ep?u.ep:u.sp;
+  const cost=k===NORMAL?0:effectiveCost(st,i,s);
+  const ok=k===NORMAL||cost<=available||(!ep&&cost===0&&s.cond==='Sp()<0')||(!ep&&u.sp>=0&&(zeroSpOk(s)||shredding(st)));
+  if(detail){
+    Object.assign(detail,{cost,available,currency:ep?'EP':'SP'});
+    delete detail.reason;delete detail.allowance;
+    if(!ok)detail.reason=`${detail.currency}不足（现有 ${Math.round(available*10)/10}，需要 ${cost}）`;
+    else if(available<cost)detail.allowance=k===NORMAL?'普通攻击不耗 SP'
+      :cost===0&&s.cond==='Sp()<0'?'负 SP 专用零费技能'
+      :zeroSpOk(s)?'技能自带：SP 非负时可透支':'速弹：SP 非负时可透支';
+  }
+  return ok;
+}
 const hasAttackPart=s=>(s.parts||[]).some(p=>ATTACK_PART_TYPES.has(p.skillType)||(p.branches||[]).some(hasAttackPart));
 const fixedUseLimit=s=>Array.isArray(s.uses)&&s.uses.length===1&&s.uses[0]<0;
 function availableUses(st,i,s){
@@ -1222,11 +1237,7 @@ export function usableSkills(st,i,requested){
     if(s.consume&&s.consume!=='Sp'&&s.consume!=='Ep'){if(explain)requested.reason='未建模的耗费类型 '+s.consume;return;}
     if(s.passive){if(explain)requested.reason='被动技能不能作为行动选择';return;}
     if(s.special==='immersion'&&(u.reinforced||u.immPending)){if(explain)requested.reason='已选择沉浸或正在沉浸中';return;}
-    const cost=effectiveCost(st,i,s),ep=s.consume==='Ep';
-    if(!(cost<=(ep?u.ep:u.sp)||(!ep&&cost===0&&s.cond==='Sp()<0')||(!ep&&u.sp>=0&&(zeroSpOk(s)||shredding(st))))){
-      if(explain)requested.reason=`${ep?'EP':'SP'}不足（现有 ${Math.round((ep?u.ep:u.sp)*10)/10}，需要 ${cost}）`;
-      return;
-    }
+    if(!canPaySkillCost(st,i,k,explain?requested:undefined))return;
     const limit=availableUses(st,i,s);
     const used=u.uses[ROOT_LABEL(s)]||0;
     if(limit>0&&used>=limit&&!divaUse(u,s)&&!(s.useCond&&check(st,s.useCond,i,{}))){
@@ -1241,7 +1252,7 @@ export function usableSkills(st,i,requested){
     }
     out.push(k);
   });
-  if(!meta.noNormal)out.push(NORMAL);
+  if(!meta.noNormal){out.push(NORMAL);if(requested?.k===NORMAL)canPaySkillCost(st,i,NORMAL,requested);}
   return out;
 }
 

@@ -219,10 +219,10 @@ test('axis repair writes a legal static route for a failed OD and an unaffordabl
   assert.ok(revisited?.label.includes('修正排轴'));assert.equal(revisited.mc.onPlan,1);
 });
 
-test('an expected-path resource error does not discard genuinely legal fixed-team random clears',()=>{
+test('a resource error on a later menu does not discard samples that cleared before reaching that menu',()=>{
   const {input}=historyFixture();Object.assign(input.opts,{fixedTeam:true,mcRuns:96});
   const fatal=input.data.skills.styles.S1.skills[1];fatal.sp=60;
-  const prior={members:structuredClone(input.base),design:{phases:[{turns:[{front:[0,1,2],actions:[{u:0,s:'Skill0'},{u:1,s:fatal.label}]}]}]},ruleIds:[]};
+  const prior={members:structuredClone(input.base),design:{phases:[{turns:[{front:[0,1,2],actions:[{u:0,s:'Skill0'}]},{actions:[{u:1,s:fatal.label}]}]}]},ruleIds:[]};
   prior.members[0].deckSkillIds=[100];prior.members[1].deckSkillIds=[fatal.id];
   const party=buildParty(membersFrom({members:prior.members},input.archive,input.data.catalog).members,input.data);
   const enemy=input.target.phases[0].enemies[0];enemy.hp=enemy.maxHp=1e8;
@@ -233,6 +233,21 @@ test('an expected-path resource error does not discard genuinely legal fixed-tea
   const r=replayPrior(input,prior).r;assert.ok(r);assert.equal(r.score,null);
   assert.ok(r.mc.successes>0&&r.mc.successes<r.mc.n);
   assert.equal(r.mc.successes,r.mc.scoreSamples);
+});
+
+test('long search can salvage a saved opening without admitting any scores for the illegal original',async()=>{
+  const {input,prior}=historyFixture(),skill=input.data.skills.styles.S1.skills[1];
+  skill.sp=60;prior.members[1].deckSkillIds=[skill.id];
+  prior.design.phases[0].turns[0].actions.push({u:1,s:skill.label});
+  const original=structuredClone(prior);
+  Object.assign(input.opts,{longSearch:true,longPassKind:'axis',axisTrials:1,mcRuns:8});
+  input.incumbents=[prior];
+  const run=await optimize(input);
+  const repaired=run.top.find(t=>t.label.includes('修正排轴'));
+  assert.deepEqual(run.errors,[]);assert.deepEqual(prior,original);
+  assert.ok(repaired);assert.equal(repaired.mc.onPlan,1);
+  assert.notEqual(repaired.design.phases[0].turns[0].actions[1].s,skill.label);
+  assert.ok(!run.top.some(t=>JSON.stringify(t.design)===JSON.stringify(original.design)));
 });
 
 test('fixed-team equipment variants use owned instances, respect personal jewels and retain the original candidate',async()=>{

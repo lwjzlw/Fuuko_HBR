@@ -7,7 +7,7 @@
 //         extra:[{u, s, target}…]}                 追加回合
 // action.s：技能 label；'normal' = 普攻（ADMIRAL 为指揮行動）；'' = 不行动
 import {initialState,startTurn,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,
-  usableSkills,useCommand,act,effectiveCost,canLimitDamage,odCost,setPhase,NORMAL} from './hbr/battle.mjs';
+  usableSkills,useCommand,act,effectiveCost,canPaySkillCost,canLimitDamage,odCost,setPhase,NORMAL} from './hbr/battle.mjs';
 import {applyCard,cardById} from './cards.mjs';
 import {selectableAllyTargets} from './search.mjs';
 
@@ -90,40 +90,60 @@ export function simulateDesign(ctx,o,design){
     };
     const runActions=(list,round,turn,context={},commands=[])=>{
       const roundId=trace?++roundNo:0;
+      const actions=(list||[]).filter(a=>a.s);
+      const planned=trace?actions.map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s,target:a.target,backup:!!a.backup,limiter:a.limiter===true})):[];
       if(trace)add({kind:'round',phase:p,turn,round,roundId,...context,
         actors:context.actors||st.units.filter(u=>u.front).map(u=>u.i),
         commands:commands.map(a=>({unit:a.u,label:a.s,skill:st.units[a.u]?.commandSkill?.name||a.s})),
-        planned:(list||[]).filter(a=>a.s).map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s,target:a.target,backup:!!a.backup,limiter:a.limiter===true}))});
+        planned});
       if(commands.length)runCommands(commands,{phase:p,turn,round,roundId});
       if(cleared)return;
-      const done=new Set();
-      for(const a of list||[]){
-        if(a.s&&done.has(a.u)){issue(turn,`${ctx.party[a.u]?.name} 本轮已经行动过`);continue;}
-        if(cleared||failed)return;
-        if(a.s==='')continue;
+      // All actors choose from the same menu before anyone spends or grants SP.
+      // Check even the actions that a subsequent early kill will skip.
+      const selected=[],done=new Set();
+      for(let j=0;j<actions.length;j++){
+        const a=actions[j],entry=planned[j];
+        const reject=msg=>{issue(turn,msg);if(entry)entry.selectionError=msg;};
         const r=resolve(st,a.u,a.s);
-        if(r.error){issue(turn,`${ctx.party[a.u]?.name||'#'+a.u}：${r.error}`);continue;}
+        if(r.error){reject(`${ctx.party[a.u]?.name||'#'+a.u}：${r.error}`);continue;}
         const u=st.units[a.u];
-        if(!u.front&&round!=='extra'){issue(turn,`${ctx.party[a.u].name} 不在前卫，不能行动`);continue;}
+        if(entry)Object.assign(entry,{selectionSp:u.sp,selectionEp:u.ep||0,selectionCost:r.k===NORMAL?0:effectiveCost(st,a.u,r.skill),
+          selectionCurrency:r.skill.consume==='Ep'?'EP':'SP'});
+        if(done.has(a.u)){reject(`${ctx.party[a.u].name} 本轮已经行动过`);continue;}
+        if(!u.front&&round!=='extra'){reject(`${ctx.party[a.u].name} 不在前卫，不能行动`);continue;}
         if(a.target!=null&&!selectableAllyTargets(r.skill,a.u,st.units).includes(a.target)){
-          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」的指定队友不可选`);continue;
+          reject(`${ctx.party[a.u].name}「${r.skill.name}」的指定队友不可选`);continue;
         }
         if(a.limiter===true&&!canLimitDamage(ctx.party[a.u],r.skill)){
-          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」无法开启限伤，请检查限制器是否装备以及是否为主动攻击技能`);continue;
+          reject(`${ctx.party[a.u].name}「${r.skill.name}」无法开启限伤，请检查限制器是否装备以及是否为主动攻击技能`);continue;
         }
         const requested={k:r.k},usable=usableSkills(st,a.u,requested);
+        if(entry&&requested.allowance)entry.selectionAllowance=requested.allowance;
+        const choices=o.onUnavailable?usable.map(k=>{
+          const sk=ctx.party[a.u].skills[k];
+          return {k,s:k===NORMAL?'normal':sk.label,cost:k===NORMAL?0:effectiveCost(st,a.u,sk)};
+        }):null;
         // A generated fallback is optional and may never spend SP, including an Admiral's command.
         if(a.backup&&a.s==='normal'&&(!usable.includes(r.k)||(r.k!==NORMAL&&effectiveCost(st,a.u,r.skill)!==0)))continue;
         if(!usable.includes(r.k)){
-          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」不可用：${requested.reason||'此轮无法行动'}`);
-          o.onUnavailable?.({node:a,phase:p,turn,kind:'skill',choices:usable.map(k=>{
-            const sk=ctx.party[a.u].skills[k];
-            return {s:k===NORMAL?'normal':sk.label,cost:k===NORMAL?0:effectiveCost(st,a.u,sk)};
-          })});
+          reject(`${ctx.party[a.u].name}「${r.skill.name}」选招时不可用：${requested.reason||'此轮无法行动'}`);
+          o.onUnavailable?.({node:a,phase:p,turn,kind:'skill',choices});
           continue;
         }
-        const before=st.totalDamage,enemyName=st.ctx.enemy.name,cost=r.k===NORMAL?0:effectiveCost(st,a.u,r.skill);
-        act(st,a.u,r.k,a.target,a.limiter===true);done.add(a.u);
+        done.add(a.u);selected.push({a,r,entry,choices});
+      }
+      for(const {a,r,entry,choices} of selected){
+        const payment=trace?{}:undefined;
+        if(!canPaySkillCost(st,a.u,r.k,payment)){
+          const detail=payment||{};if(!payment)canPaySkillCost(st,a.u,r.k,detail);
+          const msg=`${ctx.party[a.u].name}「${r.skill.name}」结算时${detail.reason}，本次排轴按无效处理（条件费用变化的结算尚待实测）`;
+          issue(turn,msg);
+          if(entry)Object.assign(entry,{executionError:msg,executionCost:detail.cost});
+          o.onUnavailable?.({node:a,phase:p,turn,kind:'skill',choices:choices.filter(c=>canPaySkillCost(st,a.u,c.k))});
+          continue;
+        }
+        const before=st.totalDamage,enemyName=st.ctx.enemy.name,cost=payment?.cost;
+        act(st,a.u,r.k,a.target,a.limiter===true);
         add({kind:'act',phase:p,turn,round,roundId,unit:a.u,skill:r.skill.name||r.skill.label,target:a.target,backup:!!a.backup,limiter:a.limiter===true,cost,consume:r.skill.consume||'Sp',damage:Math.round(st.totalDamage-before)});
         if(advance({phase:p,turn,round,roundId,unit:a.u},enemyName)){cleared=true;return;}
       }
@@ -258,7 +278,7 @@ export function mulberry32(seed){let a=seed>>>0;return ()=>{a=(a+0x6D2B79F5)>>>0
 export const monteCarloSampleSeed=(seed,index)=>(seed+Math.imul(index,0x9E3779B9))>>>0;
 /**
  * 同一份设计按随机暴击（逐段）、伤害浮动 90–110%、敌方随机选单体目标与伤害浮动重放 n 次。
- * success = 全部阶段击破、无人 HP 清零且每个已执行的计划动作合法；默认允许按最后一回合续打 2 回合，onPlan 单独统计原轴内完成。
+ * success = 全部阶段击破、无人 HP 清零且实际到达的每个行动轮均能选出整组计划动作；默认允许按最后一回合续打 2 回合，onPlan 单独统计原轴内完成。
  * scoreMean / scoreP10 仅统计成功样本；失败仍计入 success / onPlan 的分母和 fails，未成功时分数为 null。
  */
 export function monteCarlo(ctx,o,design,{n=100,seed=1,scoreOf=null}={}){

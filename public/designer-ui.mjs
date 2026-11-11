@@ -78,12 +78,13 @@ ${iss.length?`<ul class="compact">${iss.map(x=>`<li class="${x.level==='error'?'
     const overkill=W.overkill!==false;
     const damages=phases.map((_,i)=>overkill?res.phases[i]?.shown??res.phases[i]?.damage??0:res.phases[i]?.damage||0);
     const sc=waveScore({damages,turns:res.turns,difficulty:Number(W.difficulty)||40,rules:W.rules,international:W.international});
+    const invalid=res.issues.some(x=>x.level==='error'),complete=res.phases.filter(p=>p.cleared).length===phases.length;
     waveHtml=`<div class="dz-wave"><h3>遭遇战计分</h3>
 <div class="field-grid three"><label>难度<input id="dz-diff" type="number" min="1" max="40" value="${W.difficulty}"></label>
 <label class="inline"><input id="dz-intl" type="checkbox" ${W.international?'checked':''}>国际服回合分（总回合 −3）</label>
 <label class="inline"><input id="dz-overkill" type="checkbox" ${overkill?'checked':''}>伤害分计溢出伤害（推定）</label></div>
 <p class="compact">各阶段伤害 ${damages.map((d,i)=>`${i+1}面 ${n(d)}（${n(sc.phaseScores[i])} 分）`).join(' · ')}</p>
-<p class="compact">伤害分 ${n(sc.damageScore)} + 回合分 ${n(sc.roundScore)}（${res.turns} 回合）+ 难度分 ${n(sc.difficultyScore)} → × 规则 ${sc.multiplier.toFixed(2)} = <b>${n(sc.total)}</b>${res.failed?' <span class="pill-error">（设计中途失败，分数无效）</span>':''}</p>
+<p class="compact">伤害分 ${n(sc.damageScore)} + 回合分 ${n(sc.roundScore)}（${res.turns} 回合）+ 难度分 ${n(sc.difficultyScore)} → × 规则 ${sc.multiplier.toFixed(2)}${invalid||res.failed||!complete?' · <b class="pill-error">'+(invalid?'有无法执行的行动':res.failed?'战斗失败':'尚未通关')+'，无通关分数</b>':' = <b>'+n(sc.total)+'</b>'}</p>
 <p class="subtle compact">计分按社区遭遇战出分表 / HBR Toolbox。敌人使用主界面“敌方参数”所列数值，DP/HP 底表尚未完成各难度实战校准；可填写已知实测值，修改难度会重建回放。勾选“计溢出”时每阶段伤害 = 画面显示的全部伤害（含击破那一下超出的部分），否则只计实际扣掉的 DP/HP。</p></div>`;
   }
   host.innerHTML=`<div class="split-heading"><h2>排轴设计器 <small class="subtle">手排每回合行动，修改即重放</small></h2>

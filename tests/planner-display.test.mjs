@@ -122,6 +122,31 @@ test('designer replay explains each selected critical mode beside its result',()
   env.view.crit='all';renderDesigner(env);assert.match(host.innerHTML,/不代表实际必定暴击/);
 });
 
+test('action cards distinguish selection from execution SP, and an unselectable finisher cannot earn a score',()=>{
+  const ctx=battle(),[giver,receiver]=ctx.party;
+  for(const u of ctx.party)u.initialSp=0;
+  giver.skills.push({...giver.skills[0],label:'Give',name:'喂 SP',sp:0,
+    parts:[{skillType:'HealSp',targetType:'AllySingleWithoutSelf',power:[4,4]}]});
+  const hit={...receiver.skills[0],label:'Hit',name:'重击',sp:3};
+  receiver.skills.push(hit);
+  Object.assign(ctx.phases[0].enemies[0],{dp:[],maxDp:0,hp:1,maxHp:1});
+  const design={phases:[{turns:[{actions:[{u:0,s:'Give',target:1},{u:1,s:'Hit'},{u:2,s:'Skill2'}]}]}]};
+  const good=axisView({e,n,...ctx,design});
+  assert.equal(good.summary.invalid,false);
+  assert.match(good.html,/重击<\/span><small>选招时 SP 3 · 需 3<\/small><small>扣盾\/血 1 · 行动后 SP 4/);
+  hit.sp=7;
+  const bad=axisView({e,n,...ctx,design});
+  assert.equal(bad.summary.invalid,true);
+  assert.match(bad.html,/选招时 SP 3 · 需 7<\/small><small class="pill-error">/);
+  const host={innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null};
+  renderDesigner({e,n,host,...ctx,opt:{},design,wave:{difficulty:40,rules:[]},save:()=>{}});
+  assert.match(host.innerHTML,/有无法执行的行动，无通关分数/);
+  assert.doesNotMatch(host.innerHTML,/× 规则 [\d.]+ = <b>\d/);
+  hit.allowSpOverdraft=true;
+  const exempt=axisView({e,n,...ctx,design});
+  assert.equal(exempt.summary.invalid,false);assert.match(exempt.html,/选招时 SP 3 · 需 7<\/small><small>[^<]*(透支|负)/);
+});
+
 test('sparse extra and invalid actions have three positions, preserve order and escape text',()=>{
   const ctx=battle();ctx.party[0].skills.at(-1).parts[0].targetType='Self';ctx.party[0].name='<img onerror=bad>';
   const design={phases:[{turns:[{actions:[{u:0,s:'Extra'},...actions().slice(1)],extra:[{u:0,s:'missing<script>'}]}]}]};
