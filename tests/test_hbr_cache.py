@@ -334,7 +334,9 @@ class DeckTests(unittest.TestCase):
         self.assertEqual(member["limitBreak"], 3)
         self.assertEqual(member["tearLevel"], 1)
         self.assertEqual(member["supportStyleId"], "RKayamori01")
-        self.assertEqual(member["accessories"]["earring"], {"masterId": 5021003, "main": [42600203], "expansion": [42400011], "plus": 0})
+        self.assertEqual(member["accessories"]["earring"], {"instanceId": "7", "masterId": 5021003, "main": [42600203], "expansion": [42400011], "plus": 0})
+        self.assertIn(member["accessories"]["earring"], result["accessories"])
+        self.assertEqual(member["unresolvedAccessories"], [])
         self.assertEqual(member["character"]["level"], 180)
         self.assertEqual(member["character"]["reincarnation"], 5)
         self.assertEqual(member["card"]["level"], 15)
@@ -342,6 +344,16 @@ class DeckTests(unittest.TestCase):
         self.assertEqual({c["styleId"] for c in member["characterCards"]}, {"RKayamori01", "RKayamori05"})
         self.assertNotIn("ring", member["accessories"])
         self.assertIsNone(deck["members"][1])
+
+    def test_unresolved_instance_is_reported_separately_from_empty_slot(self):
+        tables = {"deck_meta": [DECK_META], "deck_slots": DECK_SLOTS,
+                  "deck_members": [{**DECK_MEMBERS[0], "_ringAccessoryId": 999, "_jewelAccessoryId": 8}],
+                  "accessories": ACCESSORIES}
+        member = hbr_cache.decks_from_tables(tables, CATALOG)[0]["members"][0]
+        self.assertEqual(member["unresolvedAccessories"], ["ring"])
+        self.assertNotIn("ring", member["accessories"])
+        self.assertEqual(member["accessories"]["jewel"]["instanceId"], "8")
+        self.assertEqual(hbr_cache.accessory_inventory(tables)[1], member["accessories"]["jewel"])
 
     def test_decks_endpoint_reads_only(self):
         with tempfile.TemporaryDirectory() as tmp:

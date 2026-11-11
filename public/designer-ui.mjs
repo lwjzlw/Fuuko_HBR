@@ -3,6 +3,7 @@ import {simulateDesign,emptyTurn,skillChoices} from './sim/designer.mjs';
 import {waveScore} from './boss-model.mjs';
 import {CARDS} from './sim/cards.mjs';
 import {groupAxisRows,renderAxisRows,replayAssumptions} from './planner-axis.mjs';
+import {selectableAllyTargets} from './sim/search.mjs';
 
 const ROUNDS=['main','extra'];
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -26,17 +27,22 @@ export function renderDesigner(env){
   const skillOpts=(u,cur)=>{if(!Number.isInteger(u))return '<option value="">—</option>';
     return skillChoices(party[u]).map(c=>`<option value="${e(c.s)}" ${c.s===cur?'selected':''}>${e(c.name)}${c.sp?` · SP${c.sp}`:''}</option>`).join('');};
   const slots=(path,list,count,pool)=>Array.from({length:count},(_,k)=>{const a=list?.[k]||{};
-    return `<span class="slot"><select data-dz-u="${path}|${k}" aria-label="行动者">${memberOpts(a.u,pool)}</select><select data-dz-s="${path}|${k}" aria-label="技能">${skillOpts(a.u,a.s)}</select></span>`;}).join('');
+    const targets=selectableAllyTargets(party[a.u]?.skills.find(s=>s.label===a.s),a.u,party);
+    const targetSelect=targets.length?`<select data-dz-ally="${path}|${k}" aria-label="技能目标"><option value="">自动选队友</option>${targets.map(i=>`<option value="${i}" ${a.target===i?'selected':''}>${name(i)}</option>`).join('')}</select>`:'';
+    return `<span class="slot"><select data-dz-u="${path}|${k}" aria-label="行动者">${memberOpts(a.u,pool)}</select><select data-dz-s="${path}|${k}" aria-label="技能">${skillOpts(a.u,a.s)}</select>${targetSelect}</span>`;}).join('');
   const all=party.map((_,i)=>i);
+  const rider=party.findIndex(u=>u.passives?.some(p=>p.parts?.some(part=>part.skillType==='SpecialCommandCountUp'&&part.branches?.some(b=>b.label==='BIYamawakiSkill55b'))));
+  const commands=(path,list,label='魔界骑兵')=>rider<0?'':`<label class="dz-command">${label}<select data-dz-command="${path}" data-command-owner="${rider}" aria-label="${label}发动次数">${[0,1,2,3].map(v=>`<option value="${v}" ${v===(list?.length||0)?'selected':''}>${v?v+' 次':'不发动'}</option>`).join('')}</select></label>`;
   const frontSel=(path,front)=>[0,1,2].map(k=>`<select data-dz-f="${path}|${k}" aria-label="前卫 ${k+1}">${memberOpts(front?.[k],all)}</select>`).join('');
   const odBlock=(t,ti,key,label)=>{
     const od=t[key];
     const lv=`<label>${label}<select data-dz-od="${ti}|${key}"><option value="0">不开</option>${[1,2,3].map(l=>`<option value="${l}" ${od?.level===l?'selected':''}>OD${l}</option>`).join('')}</select></label>`;
     if(!od?.level)return lv;
     const rounds=Array.from({length:od.level},(_,r)=>{const R=od.rounds?.[r]||{};
-      return `<div class="dz-round"><b>OD 第 ${r+1} 轮</b> 前卫 ${frontSel(`${ti}|${key}|${r}`,R.front)}<br>${slots(`${ti}|${key}|${r}|actions`,R.actions,3,all)}
-      <details ${R.extra?.some(a=>a.s)?'open':''}><summary>追加回合</summary>${slots(`${ti}|${key}|${r}|extra`,R.extra,3,all)}</details></div>`;}).join('');
-    return lv+rounds;
+      return `<div class="dz-round"><b>OD 第 ${r+1} 轮</b> 前卫 ${frontSel(`${ti}|${key}|${r}`,R.front)}<br>${commands(`${ti}|${key}|${r}|commands`,R.commands)}${slots(`${ti}|${key}|${r}|actions`,R.actions,3,all)}
+      <details ${R.extra?.some(a=>a.s)||R.extraCommands?.length?'open':''}><summary>追加回合</summary>${commands(`${ti}|${key}|${r}|extraCommands`,R.extraCommands)}${slots(`${ti}|${key}|${r}|extra`,R.extra,3,all)}</details></div>`;}).join('');
+    const before=key==='odStart'?commands(`${ti}|${key}|commandsBefore`,od.commandsBefore,'开 OD 前的魔界骑兵'):'';
+    return before+lv+rounds;
   };
   // 每回合的结果摘要
   const rowsOf=ti=>res.rows.filter(r=>r.phase===view.phase&&r.turn===turnNo(ti));
@@ -44,7 +50,7 @@ export function renderDesigner(env){
   const turnNo=ti=>turnBase+ti+1;
   const summary=ti=>{
     const rs=rowsOf(ti);if(!rs.length)return '<p class="subtle compact">（未执行：前面已击破或已失败）</p>';
-    const last=rs.at(-1),dmg=rs.filter(r=>r.kind==='act').reduce((a,r)=>a+r.damage,0);
+    const last=rs.at(-1),dmg=rs.filter(r=>r.kind==='act'||r.kind==='command').reduce((a,r)=>a+r.damage,0);
     const iss=res.issues.filter(x=>x.turn===turnNo(ti));
     const acts=renderAxisRows(groupAxisRows(rs),{e,n,party});
     const enemy=rs.filter(r=>r.kind==='enemy').map(r=>`<p class="compact subtle">敌方：${e([...new Set(r.events.filter(x=>x.t==='enemy').map(x=>enemySkillName(x.skill)))].join('、')||'—')}${r.events.some(x=>x.t==='dpBreak')?' <span class="pill-error">有人倒下</span>':''}</p>`).join('');
@@ -58,8 +64,8 @@ ${iss.length?`<ul class="compact">${iss.map(x=>`<li class="${x.level==='error'?'
 <div class="split-heading"><h3>第 ${turnNo(ti)} 回合</h3><div class="inline"><button class="link" data-dz-copy="${ti}" type="button">复制到下一回合</button><button class="link" data-dz-del="${ti}" type="button">删除</button></div></div>
 <div class="dz-grid">
   <div>${odBlock(t,ti,'odStart','回合开始 OD')}
-  <div class="dz-round"><b>普通行动</b> 前卫 ${frontSel(`${ti}|main`,t.front)}<br>${slots(`${ti}|actions`,t.actions,3,all)}
-  <details ${t.extra?.some(a=>a.s)?'open':''}><summary>追加回合</summary>${slots(`${ti}|extra`,t.extra,3,all)}</details></div>
+  <div class="dz-round"><b>普通行动</b> 前卫 ${frontSel(`${ti}|main`,t.front)}<br>${commands(`${ti}|commands`,t.commands)}${slots(`${ti}|actions`,t.actions,3,all)}
+  <details ${t.extra?.some(a=>a.s)||t.extraCommands?.length?'open':''}><summary>追加回合</summary>${commands(`${ti}|extraCommands`,t.extraCommands)}${slots(`${ti}|extra`,t.extra,3,all)}</details></div>
   ${odBlock(t,ti,'odEnd','回合结束 OD')}</div>
   <div class="dz-result">${summary(ti)}</div>
 </div></div>`;
@@ -97,8 +103,10 @@ ${flags.length?`<details><summary>近似处理（${flags.length}）</summary><p 
 
 function listAt(design,phase,path){
   const [ti,key,r,sub]=path.split('|');const t=design.phases[phase].turns[Number(ti)];
-  if(key==='actions'||key==='extra'){t[key]=t[key]||[];return t[key];}
-  const od=t[key];od.rounds=od.rounds||[];const R=od.rounds[Number(r)]=od.rounds[Number(r)]||{front:null,actions:[],extra:[]};
+  if(['actions','extra','commands','extraCommands'].includes(key)){t[key]=t[key]||[];return t[key];}
+  const od=t[key];
+  if(key==='odStart'&&r==='commandsBefore')return od.commandsBefore??=[];
+  od.rounds=od.rounds||[];const R=od.rounds[Number(r)]=od.rounds[Number(r)]||{front:null,actions:[],extra:[]};
   R[sub]=R[sub]||[];return R[sub];
 }
 function frontAt(design,phase,path){
@@ -111,10 +119,18 @@ function frontAt(design,phase,path){
 function bindDesigner(env,res){
   const {host}=env,design=env.design,view=env.view,P=view.phase;
   const commit=()=>{for(const ph of design.phases)for(const t of ph.turns){if(t.front&&t.front.every(x=>x==null))t.front=null;}env.save(design);renderDesigner(env);};
+  host.querySelectorAll('[data-dz-command]').forEach(s=>s.onchange=()=>{
+    const owner=Number(s.dataset.commandOwner);
+    const list=listAt(design,P,s.dataset.dzCommand);
+    list.splice(0,list.length,...Array.from({length:Number(s.value)},()=>({u:owner,s:'BIYamawakiSkill55b'})));
+    commit();
+  });
   host.querySelectorAll('[data-dz-u]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzU.split('|');const k=Number(parts.pop());const list=listAt(design,P,parts.join('|'));
     list[k]={u:s.value===''?null:Number(s.value),s:''};commit();});
   host.querySelectorAll('[data-dz-s]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzS.split('|');const k=Number(parts.pop());const list=listAt(design,P,parts.join('|'));
-    list[k]={...(list[k]||{}),s:s.value};commit();});
+    list[k]={u:list[k]?.u,s:s.value};commit();});
+  host.querySelectorAll('[data-dz-ally]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzAlly.split('|');const k=Number(parts.pop());const a=listAt(design,P,parts.join('|'))[k];
+    if(s.value==='')delete a.target;else a.target=Number(s.value);commit();});
   host.querySelectorAll('[data-dz-f]').forEach(s=>s.onchange=()=>{const parts=s.dataset.dzF.split('|');const k=Number(parts.pop());const f=frontAt(design,P,parts.join('|'));
     f[k]=s.value===''?null:Number(s.value);commit();});
   host.querySelectorAll('[data-dz-od]').forEach(s=>s.onchange=()=>{const [ti,key]=s.dataset.dzOd.split('|');const t=design.phases[P].turns[Number(ti)];const l=Number(s.value);

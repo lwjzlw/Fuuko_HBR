@@ -1,5 +1,5 @@
 // 配置详情只读取已采用成员的数据；未识别词条与模型回退值分开显示。
-import {describeEffect,statNames} from './equipment.mjs';
+import {canEquip,describeEffect,statNames} from './equipment.mjs';
 import {accessoryEffects} from './sim/hbr/deck.mjs';
 import {EXPANSION,styleStatus,STAT_MODEL} from './sim/hbr/stats.mjs';
 
@@ -11,10 +11,12 @@ export function equipmentDetails(member,equipment){
   const raw=member?.raw;
   if(!raw?.accessories)return null;
   const byId=new Map((equipment?.entries||[]).map(x=>[Number(x.sourceId),x])),out=[];
+  const unresolved=new Set(raw.unresolvedAccessories||[]);
   const one=(slot,a,label)=>{
     const item=a&&byId.get(Number(a.masterId));
-    const row={slot,label:label||SLOTS[slot]||slot,name:a?(item?.name||`未识别装备 #${a.masterId}`):'未装备',plus:a?.plus??null,lines:[]};
+    const row={slot,label:label||SLOTS[slot]||slot,name:a?(item?.name||`未识别装备 #${a.masterId}`):unresolved.has(slot)?'编队装备未匹配库存':'未装备',plus:a?.plus??null,lines:[]};
     if(a){
+      if(item&&!canEquip(item,raw))row.lines.push('专属限制与当前卡面不符，模拟未计入');
       const groups=item?.rollGroups||[],flat=groups.flatMap((g,gi)=>g.map(f=>({f,gi}))),ids=a.main||[];
       row.lines.push(...(item?.effects||[]).map(f=>'固定：'+effectText(f)));
       const picks=ids.map(id=>flat[Number(id)%100-1]);
@@ -35,8 +37,9 @@ export function equipmentDetails(member,equipment){
     }
     out.push(row);
   };
-  for(const slot of Object.keys(SLOTS))if(!slot.endsWith('Charm')||raw.accessories[slot])one(slot,raw.accessories[slot]);
-  if(!Object.keys(raw.accessories).some(k=>k.endsWith('Charm')))out.push({slot:'charm',label:'吊饰',name:'未装备',lines:[]});
+  const slots=new Set([...Object.keys(raw.accessories),...unresolved]);
+  for(const slot of Object.keys(SLOTS))if(!slot.endsWith('Charm')||slots.has(slot))one(slot,raw.accessories[slot]);
+  if(![...slots].some(k=>k.endsWith('Charm')))out.push({slot:'charm',label:'吊饰',name:'未装备',lines:[]});
   for(const slot of Object.keys(raw.accessories))if(!(slot in SLOTS))one(slot,raw.accessories[slot]);
   if('boosterId' in raw)one('booster',raw.boosterId?{masterId:raw.boosterId}:null,'增幅器');
   if(Array.isArray(raw.sphereIds)){

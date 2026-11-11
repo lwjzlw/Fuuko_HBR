@@ -7,7 +7,21 @@ const z=read('zhTW'),sources=['accessories','boosters','chips'].map(table=>({tab
 const tr=(g,f,id,fallback)=>z[g]?.[f]?.[id]||fallback;
 const effect=x=>({type:x.type,valueType:x.value_type,value:x.value,qualityTier:x.plus??null,condition:x.condition||'',skill:x.skill?{id:x.skill.label,name:tr('passiveskill','name',x.skill.label,x.skill.name),description:tr('passiveskill','description',x.skill.label,x.skill.desc),parts:x.skill.parts,timing:x.skill.timing,condition:x.skill.condition}:null});
 const slotOf=id=>{const kind=id.split('.')[1];return kind.startsWith('COrb')?'orb':Object.entries({Ring:'ring',Earring:'earring',Bracelet:'bracelet',Necklace:'necklace',Charm:'charm',Orb:'orb',Soul:'soul'}).find(([k])=>kind.startsWith(k))?.[1]||'other';};
-const entries=sources.flatMap(({table,url})=>read(table).map(x=>({id:x.label,sourceId:x.id,slot:table==='accessories'?slotOf(x.label):table==='boosters'?'booster':'chip',name:table==='accessories'?tr('accessory','name',x.label,x.name):tr('seraphbooster','boostername',x.label,x.name),nameJa:x.name,description:table==='accessories'?tr('accessory','text',x.label,x.text):tr('seraphbooster','description',x.label,x.text),rarity:x.rarity,location:table==='accessories'?tr('accessory','howtoget',x.label,x.location):tr('seraphbooster','howtoget',x.label,x.location),sourceMaxLv:x.max_lv??null,chipSlots:x.max_slot??null,soulEnhancementCap:x.label.startsWith('Acc.Soul.')?5:null,styleId:x.label.startsWith('Acc.Soul.')?x.label.slice(9):null,sourceUrl:url,effects:(x.effects||[]).map(effect),rollGroups:(x.rng_eff||[]).map(g=>g.map(effect)),skills:x.skill||[],releasedAt:x.in_date})));
+function characterOwner(x){
+  if(x.condition!=='Character')return {};
+  const match=/^Acc\.COrb\.(.+)\d{2}$/.exec(x.label);
+  if(!match)throw Error('无法识别角色专属饰品 '+x.label);
+  return {characterId:match[1]};
+}
+const entries=sources.flatMap(({table,url})=>read(table).map(x=>({
+  id:x.label,sourceId:x.id,slot:table==='accessories'?slotOf(x.label):table==='boosters'?'booster':'chip',
+  name:table==='accessories'?tr('accessory','name',x.label,x.name):tr('seraphbooster','boostername',x.label,x.name),
+  nameJa:x.name,description:table==='accessories'?tr('accessory','text',x.label,x.text):tr('seraphbooster','description',x.label,x.text),
+  rarity:x.rarity,location:table==='accessories'?tr('accessory','howtoget',x.label,x.location):tr('seraphbooster','howtoget',x.label,x.location),
+  sourceMaxLv:x.max_lv??null,chipSlots:x.max_slot??null,soulEnhancementCap:x.label.startsWith('Acc.Soul.')?5:null,
+  styleId:x.label.startsWith('Acc.Soul.')?x.label.slice(9):null,...characterOwner(x),
+  sourceUrl:url,effects:(x.effects||[]).map(effect),rollGroups:(x.rng_eff||[]).map(g=>g.map(effect)),skills:x.skill||[],releasedAt:x.in_date
+})));
 const out={schemaVersion:1,generatedAt:new Date().toISOString(),sources,entries};
 fs.writeFileSync(new URL('../public/data/equipment.json',import.meta.url),JSON.stringify(out));
 console.log(JSON.stringify({entries:entries.length,slots:Object.fromEntries([...new Set(entries.map(x=>x.slot))].map(k=>[k,entries.filter(x=>x.slot===k).length]))}));

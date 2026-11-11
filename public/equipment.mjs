@@ -4,6 +4,27 @@ export const socketStatKeys=['str','dex','con','spr','wis','luk'];
 export const socketSlots=['ring','earring','bracelet','necklace','soul'];
 export const slotNames={ring:'戒指',earring:'耳环',bracelet:'手镯',necklace:'项链',charm:'吊饰',orb:'宝玉',soul:'灵魂书',booster:'强化器',chip:'芯片',other:'其他'};
 const statTypes={Dp:'dp',Power:'str',Dexterity:'dex',Toughness:'con',Spirit:'spr',Wisdom:'wis',Luck:'luk',Sp:'sp'};
+export function canEquip(entry,member){
+  if(!entry)return false;
+  if(entry.styleId&&entry.styleId!==member?.styleId)return false;
+  if(entry.characterId&&entry.characterId!==member?.characterId)return false;
+  return true;
+}
+export function accessorySlot(entry){
+  if(entry?.slot==='orb')return 'jewel';
+  if(entry?.slot!=='charm')return entry?.slot;
+  const effects=[...(entry.effects||[]),...(entry.rollGroups||[]).flat()];
+  const types=new Set(effects.map(f=>f.type));
+  const [type]=types;
+  if(types.size===1&&socketStatKeys.includes(statTypes[type]))return type.toLowerCase()+'Charm';
+  return null;
+}
+export function ownedAccessoryOptions(slot,member,inventory,byId){
+  return (inventory||[]).filter(a=>{
+    const entry=byId.get(Number(a.masterId));
+    return canEquip(entry,member)&&accessorySlot(entry)===slot;
+  });
+}
 export function describeEffect(e){return e.skill?.description||`${statNames[statTypes[e.type]]||e.type} ${e.value?.[0]>=0?'+':''}${e.value?.[0]??'？'}${e.valueType==='Ratio'?'%':''}`;}
 export function defaultEquipment(entry){
   return {catalogId:entry.id,rollSelections:entry.rollGroups.map(g=>{
@@ -33,7 +54,8 @@ export function evaluateEquipment(entry,selection){
 export function evaluateLoadout(catalog,loadout,styles){
   const stats=Object.fromEntries(Object.keys(statNames).map(k=>[k,0])),effects=[],missing=[],rows=[];const slots=new Set();let booster=null,chipCount=0;
   for(const [selectionIndex,pick] of (loadout.equipment||[]).entries()){const entry=catalog.entries.find(x=>x.id===pick.catalogId);if(!entry){missing.push('目录缺失：'+pick.catalogId);continue;}
-    if(entry.slot!=='chip'&&slots.has(entry.slot))missing.push('重复部位：'+slotNames[entry.slot]);slots.add(entry.slot);
+    const slot=accessorySlot(entry)||entry.slot;
+    if(entry.slot!=='chip'&&slots.has(slot))missing.push('重复部位：'+slotNames[entry.slot]);slots.add(slot);
     if(entry.slot==='booster')booster=entry;if(entry.slot==='chip')chipCount++;
     const resolved=styles&&entry.slot==='soul'?{...pick,soulEnhancement:styles[entry.styleId]?.soulBookLevel??null}:pick;
     const result=evaluateEquipment(entry,resolved);rows.push({entry,selection:resolved,selectionIndex,...result});for(const key in stats)stats[key]+=result.stats[key];effects.push(...result.effects);missing.push(...result.missing.map(x=>entry.name+'：'+x));

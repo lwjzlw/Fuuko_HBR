@@ -4,6 +4,10 @@ import {optimizerInput} from './fixtures/optimizer-input.mjs';
 import {optimize,createTaskHandler} from '../public/sim/optimizer.mjs';
 import {SEARCH_PRESETS,searchBudget,normalizeMinSuccess,normalizeSuccessBasis} from '../public/sim/optimizer-options.mjs';
 import {membersFromDeck} from '../public/sim/hbr/deck.mjs';
+import {membersFrom} from '../public/sim/party.mjs';
+import {buildParty,initialState} from '../public/sim/hbr/battle.mjs';
+import {repairDesign} from '../public/sim/axis-repair.mjs';
+import {simulateDesign,monteCarlo} from '../public/sim/designer.mjs';
 
 const signature=r=>r.top.map(x=>({members:x.members,design:x.design,mc:x.mc,ruleIds:x.ruleIds}));
 function delayedRunner(input,size,reverse){
@@ -71,6 +75,199 @@ function historyFixture(){
   return {input,prior};
 }
 const replayPrior=(input,prior)=>createTaskHandler(input)({type:'incumbent',incumbent:prior});
+
+function transferredSkillFixture(){
+  const input=optimizerInput({count:6,opts:{fixedTeam:true,maxTurns:1,beam:2,screenBeam:1,mcRuns:8,top:5,minSuccess:1}});
+  const attack=structuredClone(input.data.skills.styles.S0.skills[0]);
+  Object.assign(attack,{id:9001,label:'TransferredEX',restricted:true});
+  attack.parts[0].power=[200000,200000];
+  input.data.skills.styles.S0B={skills:[attack],passives:[]};
+  input.data.catalog.characters[0].styleIds.push('S0B');
+  input.data.catalog.styles.push({...input.data.catalog.styles[0],id:'S0B'});
+  input.archive.styles.S0B={owned:true};
+  Object.assign(input.target.phases[0].enemies[0],{hp:100000,maxHp:100000});
+  input.base.forEach((m,i)=>{m.raw.skillIds=[100+i];m.deckSkillIds=[100+i];});
+  input.base[0].raw.skillIds=[9001,100];input.base[0].deckSkillIds=[9001];
+  return input;
+}
+
+test('the original fixed loadout keeps its transferred EX, empty skill slots, support and manual panel through final replay',async()=>{
+  const input=transferredSkillFixture();
+  Object.assign(input.opts,{keepLoadout:true,searchEvals:3,searchBatch:3});
+  Object.assign(input.base[0].raw,{supportStyleId:'S3',supportLimitBreak:0,support:structuredClone(input.cache.cards[3])});
+  input.base[0].stats.str=888;input.base[0].statsManual=['str'];
+  input.base[1].deckSkillIds=[];input.base[1].strictDeckSkills=true;
+  const original=structuredClone(input.base),result=await optimize(input);
+  assert.deepEqual(result.errors,[]);assert.equal(result.iterations,3);
+  assert.ok(result.top.length);assert.deepEqual(input.base,original);
+  for(const route of result.top){
+    assert.equal(route.mc.onPlan,1);
+    assert.ok(route.design.phases[0].turns[0].actions.some(a=>a.u===0&&a.s==='TransferredEX'));
+    assert.deepEqual(route.members.map(m=>m.deckSkillIds),input.base.map(m=>m.deckSkillIds));
+    assert.deepEqual(route.members[0].raw.support,input.base[0].raw.support);
+    assert.equal(route.members[0].stats.str,888);
+  }
+  const prior=structuredClone(result.top[0]);prior.members[1].deckSkillIds=[101];
+  assert.equal(replayPrior(input,prior).r,null);
+});
+
+test('flexible skill search includes equipped transferable EX and master skills exactly once',async()=>{
+  const input=transferredSkillFixture(),master=structuredClone(input.data.skills.styles.S0B.skills[0]);
+  Object.assign(master,{id:46500001,label:'MasterSkill'});
+  input.data.stats.extraSkills[master.id]=master;
+  input.base[1].raw.skillIds=[master.id];
+  const candidate={label:'Flexible',raws:input.base.map(m=>m.raw),front:input.base.map(m=>m.front)};
+  const {r,errors}=createTaskHandler(input)({type:'eval',cand:candidate});
+  assert.deepEqual(errors,[]);assert.equal(r.cleared,1);
+  assert.ok(r.slots[0].ids.includes(9001));assert.ok(r.slots[1].ids.includes(master.id));
+  for(const {ids,cap} of r.slots){assert.equal(new Set(ids).size,ids.length);assert.ok(ids.length<=cap);}
+});
+
+test('fixed loadout replays the equipped passive and support resonance and rebuilds historical manual stats from the current team',async()=>{
+  const input=transferredSkillFixture();
+  input.opts.keepLoadout=true;
+  const effect=(label,rate)=>({label,name:label,timing:'OnBattleStart',parts:[{skillType:'OverDrivePointUp',targetType:'Self',power:[rate,0]}]});
+  const offStyle={id:9002,label:'TransferPassive',name:'Transfer passive',restricted:true,passive:effect('FromSkill',0.2)};
+  input.data.skills.styles.S0B.skills.push(offStyle);
+  input.base[0].raw.skillIds.push(offStyle.id);input.base[0].deckSkillIds.push(offStyle.id);
+  const support=input.cache.cards[3];
+  Object.assign(input.base[0].raw,{support:structuredClone(support),supportStyleId:support.styleId,supportLimitBreak:3});
+  input.data.stats.styles.S3.resonance='SupportGroup';
+  input.data.stats.supportSkills={SupportGroup:[{lb:0,passive:effect('BaseResonance',0.1)},{lb:3,passive:effect('FullResonance',0.3)}]};
+  Object.assign(input.base[0],{statsManual:['dex'],stats:{...input.base[0].stats,dex:777}});
+  const result=await optimize(input);assert.deepEqual(result.errors,[]);assert.ok(result.top.length);
+  const {members}=membersFrom({members:result.top[0].members},input.archive,input.data.catalog);
+  const party=buildParty(members,input.data);
+  assert.equal(initialState(party,input.target.phases[0].enemies[0]).od,50);
+  const prior=structuredClone(result.top[0]);prior.members[0].stats.dex=9999;prior.members[0].supportStyleId='S2';
+  const rated=replayPrior(input,prior).r;assert.ok(rated);
+  assert.equal(rated.members[0].stats.dex,777);assert.equal(rated.members[0].supportStyleId,'S3');
+  prior.members[0].raw.supportStyleId='S2';
+  assert.equal(replayPrior(input,prior).r,null);
+  delete input.base[0].raw;
+  await assert.rejects(optimize(input),/请先导入/);
+});
+
+test('encounter finalists keep a one-use attack for the second phase and replay both rule multipliers',async()=>{
+  const input=transferredSkillFixture();Object.assign(input.opts,{keepLoadout:true,searchRules:true,finalists:1,top:1});
+  input.data.skills.styles.S0B.skills[0].uses=1;
+  const hard=structuredClone(input.target.phases[0]);
+  Object.assign(input.target.phases[0].enemies[0],{hp:100,maxHp:100});
+  input.target.phases.push(hard);input.target.cards=[null,null];
+  const rule={id:'grade',name:'Grade bonus',grade:20};
+  input.target.ruleOptions=[{ids:[],rules:[],phases:input.target.phases},{ids:[rule.id],rules:[rule],phases:input.target.phases}];
+  const handler=createTaskHandler(input),finals=[];
+  const run=await optimize(input,()=>{},{size:1,run:async task=>{
+    const message=handler(task);
+    if(task.type==='final'){assert.ok(task.f.reserve);finals.push(message.r);}
+    return message;
+  }});
+  assert.deepEqual(run.errors,[]);assert.equal(finals.length,2);assert.ok(run.top.length);
+  const rated=finals.map(r=>[r,...r.alternatives].find(v=>v.mc.onPlan===1));
+  assert.ok(rated.every(Boolean));
+  const bonus=rated.find(v=>v.ruleIds.includes(rule.id)),plain=rated.find(v=>!v.ruleIds.length);
+  assert.ok(bonus.mc.scoreMean>plain.mc.scoreMean);
+  const [opening,boss]=run.top[0].design.phases.map(p=>p.turns.flatMap(t=>t.actions));
+  assert.ok(opening.every(a=>a.s!=='TransferredEX'));
+  assert.ok(boss.some(a=>a.s==='TransferredEX'));
+  assert.deepEqual(run.top[0].ruleIds,[rule.id]);
+});
+
+test('axis repair writes a legal static route for a failed OD and an unaffordable skill',async()=>{
+  const {input}=historyFixture(),expensive=input.data.skills.styles.S0.skills[1];
+  expensive.sp=60;
+  const party=buildParty(membersFrom({members:input.base},input.archive,input.data.catalog).members,input.data);
+  const phase=input.target.phases[0],ctx={party,phases:[phase,structuredClone(phase)]};
+  const design={phases:[
+    {turns:[{front:[0,1,2],actions:[{u:2,s:'Skill2'}]}]},
+    {turns:[{front:[0,1,2],odStart:{level:3,rounds:[]},actions:[{u:0,s:expensive.label},{u:1,s:'Skill1'}]}]},
+  ]},original=structuredClone(design);
+  assert.equal(monteCarlo(ctx,{},design,{n:40,seed:7}).success,0);
+  const plans=repairDesign(ctx,design,{maxTurns:1});
+  assert.deepEqual(design,original);assert.ok(plans.length);
+  const winner=plans.find(d=>monteCarlo(ctx,{},d,{n:64,seed:851}).onPlan===1);
+  assert.ok(winner);
+  assert.equal(winner.phases[1].turns[0].odStart,null);
+  assert.notEqual(winner.phases[1].turns[0].actions[0].s,expensive.label);
+  input.opts.fixedTeam=true;input.opts.minSuccess=1;
+  input.target.phases=ctx.phases;input.target.cards=[null,null];
+  input.incumbents=[{label:'Saved route',members:input.base,ruleIds:[],design}];
+  const worker=createTaskHandler(input);let revisited;
+  const run=await optimize(input,()=>{},{size:1,run:async task=>{
+    const message=worker(task);
+    if(task.type==='incumbent')revisited=message.r;
+    return message;
+  }});
+  assert.deepEqual(run.errors,[]);assert.equal(run.incumbents,1);
+  assert.ok(revisited?.label.includes('修正排轴'));assert.equal(revisited.mc.onPlan,1);
+});
+
+test('an expected-path resource error does not discard genuinely legal fixed-team random clears',()=>{
+  const {input}=historyFixture();Object.assign(input.opts,{fixedTeam:true,mcRuns:96});
+  const fatal=input.data.skills.styles.S1.skills[1];fatal.sp=60;
+  const prior={members:structuredClone(input.base),design:{phases:[{turns:[{front:[0,1,2],actions:[{u:0,s:'Skill0'},{u:1,s:fatal.label}]}]}]},ruleIds:[]};
+  prior.members[0].deckSkillIds=[100];prior.members[1].deckSkillIds=[fatal.id];
+  const party=buildParty(membersFrom({members:prior.members},input.archive,input.data.catalog).members,input.data);
+  const enemy=input.target.phases[0].enemies[0];enemy.hp=enemy.maxHp=1e8;
+  const ctx={party,phases:input.target.phases};
+  const hit=simulateDesign(ctx,{critMode:'expected'},prior.design).phases[0].shown;
+  enemy.hp=enemy.maxHp=hit+2;
+  assert.ok(simulateDesign(ctx,{critMode:'expected'},prior.design).issues.some(i=>i.level==='error'));
+  const r=replayPrior(input,prior).r;assert.ok(r);assert.equal(r.score,null);
+  assert.ok(r.mc.successes>0&&r.mc.successes<r.mc.n);
+  assert.equal(r.mc.successes,r.mc.scoreSamples);
+});
+
+test('fixed-team equipment variants use owned instances, respect personal jewels and retain the original candidate',async()=>{
+  const {input}=historyFixture();
+  Object.assign(input.opts,{fixedTeam:true,searchEvals:6,top:1,finalists:1});
+  const jewel={sourceId:501,slot:'orb',name:'Personal jewel',characterId:'C1',effects:[{type:'Dp',valueType:'RealNumber',value:[1000,0]}],rollGroups:[]};
+  const ring={sourceId:502,slot:'ring',name:'Shared ring',effects:[],rollGroups:[]};
+  const soul={sourceId:503,slot:'soul',name:'Personal soul',styleId:'S0',effects:[],rollGroups:[]};
+  input.data.equipment.entries.push(jewel,ring,soul);
+  const orb={masterId:501,instanceId:'orb',main:[],expansion:[],plus:0};
+  const first={masterId:502,instanceId:'ring-a',main:[],expansion:[],plus:0},second={...first,instanceId:'ring-b'};
+  const book={masterId:503,instanceId:'soul',main:[],expansion:[],plus:0};
+  input.cache.accessories=[orb,first,second,book];
+  input.base[0].raw.accessories.soul=book;
+  input.base[0].raw.accessories.ring=first;
+  input.base[0].deckSkillIds=[100];
+  const handler=createTaskHandler(input),finals=[],seeds=[];
+  const runner={size:1,run:async task=>{
+    if(task.type==='final')finals.push(task.f);
+    if(task.type==='eval')seeds.push(task.cand);
+    return handler(task);
+  }};
+  const res=await optimize(input,()=>{},runner);
+  assert.deepEqual(res.errors,[]);assert.ok(res.iterations>0);
+  assert.ok(finals.some(f=>f.reserve&&f.raws[0]._skills.length===1));
+  assert.ok(seeds.some(c=>c.raws[1].accessories.jewel?.instanceId==='orb'));
+  for(const c of seeds){
+    assert.deepEqual(c.raws.map(m=>m.styleId),input.base.map(m=>m.styleId));
+    assert.ok(c.raws.every((r,i)=>i===1||!r.accessories.jewel));
+    const ids=c.raws.flatMap(m=>Object.values(m.accessories).map(a=>a.instanceId));
+    assert.equal(new Set(ids).size,ids.length);
+  }
+  const prior={members:structuredClone(input.base),ruleIds:[],design:{phases:[{turns:[{actions:[{u:0,s:'Skill0'}]}]}]}};
+  prior.members[1].raw.accessories.ring=first;
+  assert.equal(replayPrior(input,prior).r,null);
+  prior.members[1].raw.accessories.ring=second;
+  assert.ok(replayPrior(input,prior).r);
+  delete prior.members[0].raw.accessories.soul;
+  prior.members[1].raw.accessories.soul=book;
+  assert.equal(replayPrior(input,prior).r,null);
+  delete prior.members[1].raw.accessories.soul;
+  prior.members[0].raw.accessories.jewel=orb;
+  assert.equal(replayPrior(input,prior).r,null);
+  input.cache.accessories=[book,first];
+  const moved=[];
+  const transfer=createTaskHandler(input);
+  await optimize(input,()=>{},{size:1,run:async task=>{
+    if(task.type==='eval')moved.push(task.cand.raws);
+    return transfer(task);
+  }});
+  assert.ok(moved.some(raws=>!raws[0].accessories.ring&&raws.slice(1).some(r=>r.accessories.ring?.instanceId===first.instanceId)));
+});
 
 test('retained axes cannot bypass skill slots, disabled new orbs, or fixed tactical cards',async()=>{
   const cases=[];
@@ -143,9 +340,9 @@ function successThresholdFixture(){
     s.skills[0].parts[0].power=[750+((i*7)%13)*200,750+((i*7)%13)*200];
     s.skills[1].sp=2+i%3;s.skills[1].parts[0].power=[0.2+(i%5)*0.15,0];
   }
-  const enemy=input.target.phases[0].enemies[0];enemy.hp=enemy.maxHp=18000;
+  const enemy=input.target.phases[0].enemies[0];enemy.hp=enemy.maxHp=30000;
   const pattern={entries:[{order:1,skills:[900]}]};enemy.pattern={dp:pattern,hp:pattern};
-  enemy.skills=[{id:900,label:'SyntheticDanger',name:'Synthetic enemy attack',parts:[{skillType:'AttackSkill',targetType:'Single',power:[2500,2500],parameters:{con:1},diffForMax:0}]}];
+  enemy.skills=[{id:900,label:'SyntheticDanger',name:'Synthetic enemy attack',parts:[{skillType:'AttackSkill',targetType:'Single',power:[2100,2100],parameters:{con:1},diffForMax:0}]}];
   input.target.phases.push(structuredClone(input.target.phases[0]));input.target.cards=[null,'critRate100'];
   return input;
 }

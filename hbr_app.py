@@ -29,7 +29,7 @@ import hbr_enemy_parameters  # noqa: E402
 
 APP_ID = "hbr"
 APP_NAME = "HBR 研究室"
-VERSION = "0.11.1"
+VERSION = "0.11.2"
 PORT = 8787
 BACKUP_KEEP = 40
 SNAPSHOT_KEEP = 60
@@ -79,12 +79,13 @@ class ArchiveStore:
         self.file = self.root / "archive.json"
         self.backups = self.root / "backups"
         self.snapshots = self.root / "snapshots"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def read(self) -> dict:
-        if not self.file.is_file():
-            return {"revision": 0, "archive": None, "saved": None}
-        value = json.loads(self.file.read_text(encoding="utf-8"))
+        with self._lock:
+            if not self.file.is_file():
+                return {"revision": 0, "archive": None, "saved": None}
+            value = json.loads(self.file.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or not isinstance(value.get("archive"), dict):
             raise ValueError("archive.json 格式不对，已停止读取；请检查数据目录")
         return {"revision": int(value.get("revision") or 0), "archive": value["archive"], "saved": value.get("saved")}

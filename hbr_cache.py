@@ -360,6 +360,14 @@ ACCESSORY_SLOTS = ("earring", "necklace", "ring", "bracelet", "soul", "jewel",
                    "powerCharm", "dexterityCharm", "toughnessCharm", "spiritCharm", "wisdomCharm", "luckCharm")
 
 
+def _accessory_instance(a: dict) -> dict:
+    item = {"masterId": a.get("_masterAccessoryId"), "main": list(a.get("_mainAbilityEffectList") or []),
+            "expansion": list(a.get("_expansionAbilityEffectList") or []), "plus": a.get("_plusCount") or 0}
+    if a.get("_id") is not None:
+        item["instanceId"] = str(a["_id"])
+    return item
+
+
 def _tree_parts(card: dict) -> list:
     return [{"id": x.get("_masterAbilityTreeId"), "count": x.get("_count")} for x in card.get("_abilityTreeParts") or []]
 
@@ -414,18 +422,22 @@ def decks_from_tables(tables: dict, catalog: dict) -> list[dict]:
                 continue
             style = by_source.get(m.get("_masterCardId"))
             card = cards.get(m.get("_masterCardId"), {})
-            accessories = {}
+            accessories, unresolved = {}, []
             for slot in ACCESSORY_SLOTS:
-                a = acc.get(m.get(f"_{slot}AccessoryId"))
+                ref = m.get(f"_{slot}AccessoryId")
+                if not ref:
+                    continue
+                a = acc.get(ref)
                 if a:
-                    accessories[slot] = {"masterId": a.get("_masterAccessoryId"), "main": list(a.get("_mainAbilityEffectList") or []),
-                                         "expansion": list(a.get("_expansionAbilityEffectList") or []), "plus": a.get("_plusCount") or 0}
+                    accessories[slot] = _accessory_instance(a)
+                else:
+                    unresolved.append(slot)
             support = by_source.get(m.get("_supportCardId"))
             char = chars.get(m.get("_masterCharacterId"), {})
             row.append({
                 "slot": s.get("_slotIndex"), "styleId": style["id"] if style else None, "cardSourceId": m.get("_masterCardId"),
                 "characterId": style.get("characterId") if style else None, "skillIds": [x for x in m.get("_masterSkillIds") or [] if x],
-                "accessories": accessories, "supportStyleId": support["id"] if support else None,
+                "accessories": accessories, "unresolvedAccessories": unresolved, "supportStyleId": support["id"] if support else None,
                 "limitBreak": card.get("_limitBreakLevel"), "tearLevel": card.get("_daphneUsedNum"),
                 # 面板推算用的原始数据
                 "card": {"level": card.get("_level"), "daphne": card.get("_daphneUsedNum"), "latentPanels": list(card.get("_latentPanelAcquiredCountList") or []),
@@ -466,9 +478,7 @@ def owned_cards(tables: dict, catalog: dict) -> list[dict]:
 
 def accessory_inventory(tables: dict) -> list[dict]:
     """饰品库存（实例：主数据 ID、主词条、+枠、强化）。"""
-    return [{"masterId": a.get("_masterAccessoryId"), "main": list(a.get("_mainAbilityEffectList") or []),
-             "expansion": list(a.get("_expansionAbilityEffectList") or []), "plus": a.get("_plusCount") or 0}
-            for a in tables.get("accessories", []) if a.get("_masterAccessoryId")]
+    return [_accessory_instance(a) for a in tables.get("accessories", []) if a.get("_masterAccessoryId")]
 
 
 def decks_from_cache(catalog: dict, cache_dir: Path | None = None) -> dict:

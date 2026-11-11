@@ -38,6 +38,22 @@ test('real replay separates front/end OD and their extras into three-action rows
   assert.ok(!renderedRows[4].includes('data-od-window'));
 });
 
+test('free commands around a start OD keep their order and all three action slots',()=>{
+  const turn={turn:1,phase:0},meta={...turn,roundId:1,unit:0};
+  const rows=groupAxisRows([
+    {...turn,kind:'turn'},{...meta,kind:'command',beforeOd:true,damage:321},{...meta,kind:'break',beforeOd:true,label:'破盾'},
+    {...turn,kind:'od',window:'turnStart',level:1,label:'前开 OD'},
+    {...meta,kind:'round',round:'od1',actors:[0,1,2],commands:[{}]},
+    {...meta,kind:'command',damage:123}
+  ]);
+  const html=renderAxisRows(rows,{e,n,party:battle().party});
+  assert.equal(rows[0].usedCommands.length,2);assert.equal(rows[0].events[0].label,'破盾');
+  assert.ok(html.indexOf('321')<html.indexOf('前开 OD'));
+  assert.ok(html.indexOf('前开 OD')<html.indexOf('123'));
+  assert.ok(html.indexOf('123')<html.indexOf('class="axis-acts"'));
+  assert.equal((html.match(/class="axis-act[ "]/g)||[]).length,3);
+});
+
 test('end OD follows normal actions when there is no extra; failed activation is not rendered',()=>{
   const ctx=battle(),design={phases:[{turns:[{actions:actions(),odEnd:{level:1,rounds:[{actions:actions()}]}}]}]};
   const rows=groupAxisRows(simulateDesign(ctx,{},design).rows);

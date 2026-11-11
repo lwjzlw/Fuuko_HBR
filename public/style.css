@@ -297,6 +297,10 @@ button.link:hover{text-decoration:underline}
 .rule-pick{display:flex;gap:6px;padding:4px 0}
 
 .panel-row td{background:var(--surface-2)}
+.pl-gear-editor{display:grid;grid-template-columns:minmax(9rem,13rem) minmax(12rem,35rem);gap:12px;margin:12px 0}
+.pl-gear-editor label{min-width:0;display:grid;gap:4px}
+.pl-gear-editor select{width:100%;min-width:0}
+
 .panel-table td,.panel-table th{padding:4px 6px;font-size:12px;white-space:nowrap}
 .equip-cell .link{font-size:12px}
 /* 排轴设计器 */
@@ -381,6 +385,8 @@ button.link:hover{text-decoration:underline}
 .axis-action-flow { display: flex; gap: 6px; align-items: stretch; }
 .axis-acts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; min-width: 0; flex: 1; }
 .axis-od-action { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; flex: 0 0 76px; padding: 6px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 12px; text-align: center; }
+.axis-command-action { flex:0 1 90px;display:grid;align-content:center;gap:4px;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);text-align:center;font-size:12px }
+.dz-command { display:inline-flex;align-items:center;gap:6px;margin:4px 10px 6px 0 }
 .axis-od-action small { font-size: 11px; color: inherit; }
 .axis-act { display: flex; flex-direction: column; position: relative; gap: 4px; padding: 8px 9px 8px 25px; border-radius: 8px; background: var(--paper);
   border: 1px solid var(--border); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
@@ -401,8 +407,10 @@ button.link:hover{text-decoration:underline}
   .pl-axis, .pl-loadout, .dz-result { scroll-margin-top: 120px; }
   .axis-turns li { grid-template-columns: 48px minmax(0,1fr); padding: 8px 5px; gap: 5px; }
   .axis-acts { gap: 3px; }
-  .axis-action-flow { gap: 3px; }
+  .axis-action-flow { gap: 3px; flex-wrap: wrap; }
+  .axis-action-flow:has(.axis-command-action) .axis-acts { flex-basis: 100%; }
   .axis-od-action { flex-basis: 42px; padding: 5px 2px; font-size: 10px; }
+  .axis-command-action { flex: 0 1 auto; padding: 4px 6px; font-size: 10px; }
   .axis-od-action small { font-size: 10px; }
   .axis-act { padding: 22px 5px 6px; font-size: 11px; }
   .axis-order { top: 4px; left: 5px; }

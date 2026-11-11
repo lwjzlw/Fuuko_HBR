@@ -30,7 +30,7 @@ export function packOptimizationResult(targetKey, result, settings, selected = 0
     teamElement: normalized.teamElement, requested: normalized.top,
     minSuccess: normalized.minSuccess, minSuccessBasis: normalized.minSuccessBasis,
     battleVersion: settings.battleVersion||null, enemyContextKey: settings.enemyContextKey||null,
-    rejectedBySuccess: result.rejectedBySuccess, qualifiedCandidates: result.qualifiedCandidates, resultCandidates: result.resultCandidates,
+    rejectedBySuccess: result.rejectedBySuccess, qualifiedCandidates: result.qualifiedCandidates, resultCandidates: result.resultCandidates, attempt:result.attempt||null,
     goal: result.goal || settings.goal || 'score', elapsed: result.elapsed,
     evaluated: result.evaluated, screened: result.screened, threads: result.threads,
     scopeKey: settings.scopeKey || null, searchVersion: result.searchVersion || null,
@@ -63,6 +63,29 @@ function canonical(value){
   return value;
 }
 
+function signature(text){
+  let a=2166136261,b=5381;for(let i=0;i<text.length;i++){const c=text.charCodeAt(i);a=Math.imul(a^c,16777619);b=(Math.imul(b,33)^c)>>>0;}
+  return `v1:${text.length}:${(a>>>0).toString(16)}:${b.toString(16)}`;
+}
+
+export const partyContextKey=members=>signature(JSON.stringify(canonical(members)));
+
+/** Action indices refer to positions in this particular ordered party. */
+export function setPlannerMembers(planner,members){
+  const roster=team=>JSON.stringify((team||[]).map(m=>m?.styleId||''));
+  const old=roster(planner.members),next=roster(members);
+  if(old!==next){
+    const saved=planner.partyDesigns??={};
+    if(Object.keys(planner.designs||{}).length||Object.keys(planner.best||{}).length){
+      saved[old]={designs:planner.designs||{},best:planner.best||{}};
+    }
+    planner.designs=saved[next]?.designs||{};
+    planner.best=saved[next]?.best||{};
+    delete saved[next];
+  }
+  planner.members=members;
+}
+
 /** A local cache key, not a security hash. Search depth, thread count and the
  * automatically adopted base team do not invalidate otherwise reusable axes. */
 export function optimizationScope(targetKey,input){
@@ -73,8 +96,7 @@ export function optimizationScope(targetKey,input){
     optimizeCards:opts.optimizeCards,cards:opts.optimizeCards===false?target.cards:null,
     dataVersions:Object.fromEntries(['catalog','skills','stats','equipment'].map(k=>[k,{schema:data[k]?.schemaVersion,version:data[k]?.version,generatedAt:data[k]?.generatedAt}])),
     styles:archive.styles,characters:archive.characters,cardsOwned:cache.cards,accessories:cache.accessories}));
-  let a=2166136261,b=5381;for(let i=0;i<text.length;i++){const c=text.charCodeAt(i);a=Math.imul(a^c,16777619);b=(Math.imul(b,33)^c)>>>0;}
-  return `v1:${text.length}:${(a>>>0).toString(16)}:${b.toString(16)}`;
+  return signature(text);
 }
 
 export function reusableCandidates(saved,targetKey,scopeKey,current=null){

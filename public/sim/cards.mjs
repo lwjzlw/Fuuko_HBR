@@ -24,7 +24,7 @@ export const CARDS=[
     apply(st){for(const u of st.units)push(u,{type:'status',status:'Shredding',size:0,turns:5,src:'card'});}},
   // ---- 空間
   {id:'zoneEternal300',cat:'空間',tags:['zone'],name:'领域效果量 +300% 且永续',desc:'以主動技能展開的屬性空間 效果量+300% 並且變為回合永久',
-    apply(st){st.mods={...st.mods,zoneRule:(st.mods.zoneRule||0)+300};if(st.field)st.field={...st.field,turns:null};}}, // 与场景规则“领域效果量 +100% 且永续”同一机制，效果量相加
+    apply(st){st.mods={...st.mods,zoneRule:(st.mods.zoneRule||0)+300};if(st.field?.fromActiveSkill)st.field={...st.field,turns:null};}}, // 与场景规则“领域效果量 +100% 且永续”同一机制，效果量相加
   {id:'fieldSp3',cat:'空間',tags:['zone'],name:'冰光暗领域中 回合开始 SP+3',desc:'若回合開始時 冰/光/闇其中任一屬性空間展開中 我方全體SP+3',hook:true},
   {id:'zoneAtk300',cat:'空間',tags:['zone'],name:'冰光暗领域中 同属性技能攻击 +300%',desc:'若行動開始時 冰/光/闇其中任一屬性空間展開中 和空間相同屬性的技能攻擊力+300%',hook:true},
   {id:'zoneCrit100',cat:'空間',tags:['zone'],name:'冰光暗领域中 同属性暴伤 +100%',desc:'若行動開始時 冰/光/闇其中任一屬性空間展開中 和空間相同屬性的暴擊傷害值+100%',hook:true},
@@ -76,4 +76,21 @@ export function relevantCards(party){
     ||(c.tags.includes('breaker')&&breakers>=1)||(c.tags.includes('breaker2')&&breakers>=2)
     ||(c.tags.includes('heal')&&healers>=1)||(c.tags.includes('dp')&&(overheal||healers>=1||breakers>=1));
   return CARDS.filter(ok).map(c=>c.id);
+}
+
+/** Jointly try cards with the same trigger so the single-card search does
+ * not discard the first half of a combination before its payoff appears. */
+export function encounterCardSets(available,phases){
+  if(phases<3)return [];
+  const pool=new Set(available),sets=[];
+  for(const ids of [
+    ['breakerCrit100','breakerAtk200','breakerOd30','enemyStat100'],
+    ['zoneCrit100','zoneAtk300','fieldOd30','enemyStat100'],
+    ['dpOverAtk500','dpOverSp5','dp150Atk200','enemyStat100']
+  ]){
+    if(!ids.slice(0,2).every(id=>pool.has(id)))continue;
+    const sequence=ids.filter(id=>pool.has(id));
+    sets.push(Array.from({length:phases},(_,p)=>p?sequence[p-1]||null:null));
+  }
+  return sets;
 }

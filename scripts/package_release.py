@@ -21,10 +21,10 @@ ROOT_FILES = (
 PUBLIC_MODULES = (
     'app.mjs', 'boss-model.mjs', 'boss-ui.mjs', 'box-ui.mjs', 'box.mjs', 'cache-sync.mjs',
     'catalog-images.mjs', 'catalog-ui.mjs', 'catalog.mjs', 'designer-ui.mjs', 'equipment.mjs',
-    'legacy-storage.mjs', 'persist.mjs', 'planner-axis.mjs', 'planner-ui.mjs', 'planner-results.mjs', 'planner-loadout.mjs',
+    'legacy-storage.mjs', 'persist.mjs', 'planner-axis.mjs', 'planner-ui.mjs', 'planner-results.mjs', 'planner-loadout.mjs', 'planner-gear.mjs',
     'progress.mjs', 'soul.mjs', 'storage-v2.mjs', 'storage.mjs', 'team-verification.mjs', 'planner-enemies.mjs',
     'index.html', 'theme.js', 'style.css', 'catalog.css', 'image-placeholder.svg',
-    'sim/cards.mjs', 'sim/designer.mjs', 'sim/expr.mjs', 'sim/optimizer-sub.mjs',
+    'sim/cards.mjs', 'sim/axis-repair.mjs', 'sim/designer.mjs', 'sim/expr.mjs', 'sim/optimizer-sub.mjs',
     'sim/optimizer-worker.mjs', 'sim/optimizer.mjs', 'sim/optimizer-options.mjs', 'sim/party.mjs', 'sim/search.mjs', 'sim/worker.mjs',
     'sim/hbr/battle.mjs', 'sim/hbr/damage.mjs', 'sim/hbr/deck.mjs', 'sim/hbr/effects.mjs',
     'sim/hbr/model.mjs', 'sim/hbr/rules.mjs', 'sim/hbr/stats.mjs',
@@ -35,7 +35,7 @@ SCRIPTS = (
 )
 TESTS = (
     'boss-model.test.mjs', 'box.test.mjs', 'cache-sync.test.mjs', 'catalog.test.mjs',
-    'equipment.test.mjs', 'planner.test.mjs', 'planner-results.test.mjs', 'planner-display.test.mjs', 'progress.test.mjs', 'storage.test.mjs',
+    'search-axis.test.mjs', 'planner-known-party.test.mjs', 'equipment.test.mjs', 'planner.test.mjs', 'planner-results.test.mjs', 'planner-display.test.mjs', 'progress.test.mjs', 'storage.test.mjs',
     'test_build_bosses.py', 'test_build_skills.py', 'test_build_stats.py', 'test_hbr_app.py',
     'test_hbr_cache.py', 'test_wave_parameters.py', 'test_release.py', 'optimizer.test.mjs', 'optimizer-stability.test.mjs', 'monte-carlo.test.mjs', 'planner-enemies.test.mjs', 'enemy-stats.test.mjs', 'fixtures/optimizer-input.mjs', 'fixtures/community-cases.json',
 )

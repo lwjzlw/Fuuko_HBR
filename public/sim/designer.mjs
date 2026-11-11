@@ -7,9 +7,9 @@
 //         extra:[{u, s, target}…]}                 追加回合
 // action.s：技能 label；'normal' = 普攻（ADMIRAL 为指揮行動）；'' = 不行动
 import {initialState,startTurn,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,pendingExtra,
-  usableSkills,act,effectiveCost,setPhase,NORMAL} from './hbr/battle.mjs';
-import {OD_COST} from './hbr/rules.mjs';
+  usableSkills,useCommand,act,effectiveCost,odCost,setPhase,NORMAL} from './hbr/battle.mjs';
 import {applyCard,cardById} from './cards.mjs';
+import {selectableAllyTargets} from './search.mjs';
 
 export const emptyTurn=()=>({front:null,odStart:null,odEnd:null,actions:[],extra:[]});
 export const emptyDesign=(phases=1)=>({phases:Array.from({length:phases},()=>({turns:[emptyTurn()]}))});
@@ -78,11 +78,24 @@ export function simulateDesign(ctx,o,design){
       for(const u of st.units)u.front=set.includes(u.i);
     };
     let cleared=false;
-    const runActions=(list,round,turn,context={})=>{
+    const runCommands=(commands,context)=>{
+      for(const c of commands){
+        if(cleared||failed)return;
+        const enemyName=st.ctx.enemy.name,result=useCommand(st,c.u,c.s);
+        if(!result){issue(context.turn,`${ctx.party[c.u]?.name||'#'+c.u}：独立指令不可用或次数已用完`);continue;}
+        const meta={...context,unit:c.u};
+        add({...meta,kind:'command',skill:result.name,label:result.label,damage:Math.round(result.damage),remaining:result.remaining});
+        if(advance(meta,enemyName)){cleared=true;return;}
+      }
+    };
+    const runActions=(list,round,turn,context={},commands=[])=>{
       const roundId=trace?++roundNo:0;
       if(trace)add({kind:'round',phase:p,turn,round,roundId,...context,
         actors:context.actors||st.units.filter(u=>u.front).map(u=>u.i),
-        planned:(list||[]).filter(a=>a.s).map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s}))});
+        commands:commands.map(a=>({unit:a.u,label:a.s,skill:st.units[a.u]?.commandSkill?.name||a.s})),
+        planned:(list||[]).filter(a=>a.s).map(a=>({unit:a.u,skill:resolve(st,a.u,a.s).skill?.name||a.s,target:a.target,backup:!!a.backup}))});
+      if(commands.length)runCommands(commands,{phase:p,turn,round,roundId});
+      if(cleared)return;
       const done=new Set();
       for(const a of list||[]){
         if(a.s&&done.has(a.u)){issue(turn,`${ctx.party[a.u]?.name} 本轮已经行动过`);continue;}
@@ -92,38 +105,55 @@ export function simulateDesign(ctx,o,design){
         if(r.error){issue(turn,`${ctx.party[a.u]?.name||'#'+a.u}：${r.error}`);continue;}
         const u=st.units[a.u];
         if(!u.front&&round!=='extra'){issue(turn,`${ctx.party[a.u].name} 不在前卫，不能行动`);continue;}
+        if(a.target!=null&&!selectableAllyTargets(r.skill,a.u,st.units).includes(a.target)){
+          issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」的指定队友不可选`);continue;
+        }
         const usable=usableSkills(st,a.u);
+        // A generated fallback is optional and may never spend SP, including an Admiral's command.
+        if(a.backup&&a.s==='normal'&&(!usable.includes(r.k)||(r.k!==NORMAL&&effectiveCost(st,a.u,r.skill)!==0)))continue;
         if(!usable.includes(r.k)){
           const cost=r.k===NORMAL?0:effectiveCost(st,a.u,r.skill);
           issue(turn,`${ctx.party[a.u].name}「${r.skill.name}」不可用（SP ${Math.round(u.sp*10)/10} / 需要 ${cost}${u.uses?.[r.skill.label]?'；次数可能已用完':''}）`);
+          o.onUnavailable?.({node:a,phase:p,turn,kind:'skill',choices:usable.map(k=>{
+            const sk=ctx.party[a.u].skills[k];
+            return {s:k===NORMAL?'normal':sk.label,cost:k===NORMAL?0:effectiveCost(st,a.u,sk)};
+          })});
           continue;
         }
         const before=st.totalDamage,enemyName=st.ctx.enemy.name;
         act(st,a.u,r.k,a.target);done.add(a.u);
-        add({kind:'act',phase:p,turn,round,roundId,unit:a.u,skill:r.skill.name||r.skill.label,cost:r.k===NORMAL?0:effectiveCost(st,a.u,r.skill),damage:Math.round(st.totalDamage-before)});
+        add({kind:'act',phase:p,turn,round,roundId,unit:a.u,skill:r.skill.name||r.skill.label,target:a.target,backup:!!a.backup,cost:r.k===NORMAL?0:effectiveCost(st,a.u,r.skill),damage:Math.round(st.totalDamage-before)});
         if(advance({phase:p,turn,round,roundId,unit:a.u},enemyName)){cleared=true;return;}
       }
     };
-    const runExtra=(extra,turn,context={})=>{
+    const runExtra=(extra,turn,context={},commands=[])=>{
       const who=pendingExtra(st);
-      if(!who.length){if(extra?.some(a=>a.s))issue(turn,'没有获得追加回合，追加行动被忽略','warn');return;}
+      if(!who.length){
+        if(commands.length)issue(turn,'没有获得追加回合，无法执行这一轮的独立指令');
+        else if(extra?.some(a=>a.s))issue(turn,'没有获得追加回合，追加行动被忽略','warn');
+        return;
+      }
       startExtraTurn(st);
       const planned=(extra||[]).filter(a=>a.s&&who.includes(a.u));
-      if(!planned.length)issue(turn,`有追加回合（${who.map(i=>ctx.party[i].name).join('、')}）但没有安排行动`,'warn');
-      runActions(planned,'extra',turn,{...context,actors:who});
+      if(!planned.length&&!commands.length)issue(turn,`有追加回合（${who.map(i=>ctx.party[i].name).join('、')}）但没有安排行动`,'warn');
+      runActions(planned,'extra',turn,{...context,actors:who},commands);
       endExtraTurn(st,who);
     };
     const runOd=(od,turn,odWindow)=>{
       for(let r=0;st.odRounds>0&&!cleared&&!failed;r++){
         const round=od.rounds?.[r]||{actions:[],extra:[]};
         setFront(round.front,turn);st.acted=0;
-        runActions(round.actions,'od'+(r+1),turn,{odWindow,odLevel:od.level});
-        if(!cleared)runExtra(round.extra,turn,{odWindow,odLevel:od.level,parentRound:'od'+(r+1)});
+        runActions(round.actions,'od'+(r+1),turn,{odWindow,odLevel:od.level},round.commands);
+        if(!cleared)runExtra(round.extra,turn,{odWindow,odLevel:od.level,parentRound:'od'+(r+1)},round.extraCommands);
         endOdRound(st);
       }
     };
     // o.extendTurns：设计回合用完仍未清阶段时，重复最后一回合的行动（不含 OD）最多 N 回合（蒙特卡洛模拟“多打几回合”）
     const lastT=design_.turns.at(-1)||emptyTurn();
+    const unavailableOd=(od,turn)=>{
+      issue(turn,`OD${od.level} 发动失败（量表 ${Math.round(st.od)}%，需要 ${odCost(st,od.level)}%）`);
+      o.onUnavailable?.({node:od,phase:p,turn,kind:'od',levels:[1,2].filter(l=>l<od.level&&l>=(st.mods.minOd||1)&&st.od>=odCost(st,l))});
+    };
     const extra=Array.from({length:o.extendTurns||0},()=>({front:lastT.front,actions:lastT.actions,extra:lastT.extra,odStart:null,odEnd:null,extended:true}));
     let extended=0;
     for(const t of [...design_.turns,...extra]){
@@ -133,15 +163,23 @@ export function simulateDesign(ctx,o,design){
       startTurn(st);
       add({kind:'turn',phase:p,turn:turnNo,label:`第 ${turnNo} 回合${phasesIn.length>1?`（第 ${p+1} 阶段）`:''}`});
       const odS=t.odStart||(t.od?.window==='turnStart'?t.od:null),odE=t.odEnd||(t.od?.window==='turnEnd'?t.od:null);
-      if(odS?.level){
-        if(!startOverdrive(st,odS.level,'turnStart'))issue(turnNo,`OD${odS.level} 发动失败（量表 ${Math.round(st.od)}%，需要 ${OD_COST[odS.level]}%）`);
+      if(odS?.level&&odS.commandsBefore?.length){
+        const at=rows.length,meta={phase:p,turn:turnNo,round:'od1',roundId:trace?roundNo+1:0,beforeOd:true};
+        runCommands(odS.commandsBefore,meta);
+        if(cleared&&trace){
+          // A successful command can end the phase before OD is activated.
+          rows.splice(at,0,{...meta,kind:'round',round:'main',roundId:++roundNo,actors:st.units.filter(u=>u.front).map(u=>u.i),commands:[],planned:[]});
+        }
+      }
+      if(!cleared&&odS?.level){
+        if(!startOverdrive(st,odS.level,'turnStart'))unavailableOd(odS,turnNo);
         else{add({kind:'od',phase:p,turn:turnNo,window:'turnStart',level:odS.level,label:`前开 OD Lv.${odS.level}`});runOd(odS,turnNo,'turnStart');}
       }
-      if(!cleared){setFront(t.front,turnNo);st.acted=0;runActions(t.actions,'main',turnNo);}
-      if(!cleared)runExtra(t.extra,turnNo);
+      if(!cleared){setFront(t.front,turnNo);st.acted=0;runActions(t.actions,'main',turnNo,{},t.commands);}
+      if(!cleared)runExtra(t.extra,turnNo,{},t.extraCommands);
       let skipTick=false;
       if(!cleared&&odE?.level){
-        if(!startOverdrive(st,odE.level,'turnEnd'))issue(turnNo,`OD${odE.level} 发动失败（量表 ${Math.round(st.od)}%，需要 ${OD_COST[odE.level]}%）`);
+        if(!startOverdrive(st,odE.level,'turnEnd'))unavailableOd(odE,turnNo);
         else{add({kind:'od',phase:p,turn:turnNo,window:'turnEnd',level:odE.level,label:`后开 OD Lv.${odE.level}`});runOd(odE,turnNo,'turnEnd');skipTick=true;}
       }
       if(cleared)break;
@@ -166,20 +204,43 @@ export function skillChoices(member){
 
 /** 把搜索结果的 plan（引擎步骤）转成可编辑的设计（单阶段）。 */
 export function designFromPlan(plan,party){
-  const turns=[];let t=null,odRound=null,odLeft=0,extraTarget=null,cur=null;
+  const turns=[];let t=null,odRound=null,odLeft=0,extraTarget=null,cur=null,lastRound=null,commandsBefore=[];
   const label=(u,k)=>k===NORMAL?'normal':party[u].skills[k]?.label||'';
+  const action=p=>Number.isInteger(p.target)?{u:p.u,s:label(p.u,p.s),target:p.target}:{u:p.u,s:label(p.u,p.s)};
   for(const p of plan){
     switch(p.k){
-      case 'turn':t=emptyTurn();turns.push(t);odRound=null;odLeft=0;break;
-      case 'od':cur={level:p.level,rounds:[]};if(p.window==='turnStart')t.odStart=cur;else t.odEnd=cur;odLeft=p.level;break;
+      case 'turn':t=emptyTurn();turns.push(t);odRound=null;odLeft=0;lastRound=null;commandsBefore=[];break;
+      case 'od':
+        cur={level:p.level,rounds:[]};
+        if(p.window==='turnStart'){
+          t.odStart=cur;
+          if(commandsBefore.length)cur.commandsBefore=commandsBefore;
+        }else t.odEnd=cur;
+        odLeft=p.level;lastRound=null;break;
       case 'front':
         if(odLeft>0){odRound={front:p.units,actions:[],extra:[]};cur.rounds.push(odRound);}
         else{odRound=null;t.front=p.units;}
+        lastRound={members:p.units,actions:(odRound||t).actions,owner:odRound||t,commandKey:'commands'};
         break;
-      case 'act':(odRound?odRound.actions:t.actions).push({u:p.u,s:label(p.u,p.s)});break;
-      case 'extraStart':extraTarget=odRound?odRound.extra:t.extra;break;
-      case 'extra':extraTarget.push({u:p.u,s:label(p.u,p.s)});break;
+      case 'command':{
+        const list=p.beforeOd?commandsBefore:(lastRound.owner[lastRound.commandKey]??=[]);
+        list.push({u:p.u,s:p.s});break;
+      }
+      case 'act':(odRound?odRound.actions:t.actions).push(action(p));break;
+      case 'extraStart':extraTarget=odRound?odRound.extra:t.extra;lastRound={members:p.who,actions:extraTarget,owner:odRound||t,commandKey:'extraCommands'};break;
+      case 'extra':extraTarget.push(action(p));break;
       case 'odEnd':odRound=null;odLeft--;break;
+      case 'end':lastRound=null;break;
+    }
+  }
+  // A predicted clear truncates a round before the other members act. These
+  // actions are reached only if the enemy actually survives the preceding hits.
+  if(lastRound&&(lastRound.actions.length||lastRound.owner[lastRound.commandKey]?.length)){
+    for(const u of lastRound.members){
+      const member=party[u];
+      if(!member||lastRound.actions.some(a=>a.u===u))continue;
+      if(member.noNormal&&!member.skills.some(s=>/CommandBuff$/.test(s.label||'')&&!(s.sp||0)))continue;
+      lastRound.actions.push({u,s:'normal',backup:true});
     }
   }
   return {phases:[{turns}]};

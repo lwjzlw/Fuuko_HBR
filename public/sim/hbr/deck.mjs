@@ -1,4 +1,5 @@
 import {computePanel,STAT_KEYS,titleRank} from './stats.mjs';
+import {canEquip} from '../../equipment.mjs';
 // 游戏缓存编队 → 排轴器成员。饰品按 equipment.json 解释（固定效果 + 主词条选择），对应社区计算器的
 // 耳环（类型/档位）、古代项链（技能攻击+10%/破坏率+10%）、属性戒指（等级）与初期 SP。
 // 主词条 ID 规则：末两位 = 组号（0 起）+ 选项序号（1 起），如 42600203 = 第 0 组第 3 项。
@@ -36,11 +37,12 @@ export function accessoryEffects(entry,mainIds=[]){
 }
 
 /** 由饰品效果得到计算器装备参数与初期 SP。role 用于“[ATK/BRK…]任一的初期SP+3”类条件。 */
-export function equipmentFrom(accessories,equipmentById,role){
+export function equipmentFrom(accessories,equipmentById,role,member){
   const eq={earring:null,odEarringBonus:0,necklaceAttack:false,necklaceDestruction:false,ringElement:null,ringLevel:null,initialSp:0,skillCountUp:{},normalAttackUp:0,normalElement:null,unknown:[]};
   for(const [slot,a] of Object.entries(accessories||{})){
     const entry=equipmentById.get(a.masterId);
     if(!entry){eq.unknown.push(`${slot}:${a.masterId}`);continue;}
+    if(member&&!canEquip(entry,member)){eq.unknown.push(`${slot}:${a.masterId} 专属限制`);continue;}
     for(const f of accessoryEffects(entry,a.main)){
       if(f.type==='Sp'){if(!f.condition||f.condition===ROLE_COND[role])eq.initialSp+=Number(f.value?.[0])||0;continue;}
       if(f.type!=='PassiveSkill'||!f.skill)continue;
@@ -55,6 +57,11 @@ export function equipmentFrom(accessories,equipmentById,role){
         if(p.skill_type==='AttackUp'&&slot==='ring'&&el){const lv=RING_LEVELS.indexOf(pw);eq.ringElement=el.toLowerCase();eq.ringLevel=lv>=0?lv:RING_LEVELS.length-1;}
         else if(p.skill_type==='AttackUp'&&slot==='necklace'&&!el&&pw===10)eq.necklaceAttack=true;
         else if(p.skill_type==='DamageRateUp'&&slot==='necklace'&&pw===10)eq.necklaceDestruction=true;
+        else if(slot==='necklace'&&p.skill_type==='DefenseUp'&&f.skill.timing==='OnEnemyTurnStart'&&p.target_type==='Self'&&p.effect?.exitCond==='EnemyTurnEnd'){
+          eq.enemyTurnDefense={label:f.skill.id,name:f.skill.name,timing:f.skill.timing,condition:f.skill.condition,
+            parts:[{skillType:p.skill_type,targetType:p.target_type,cond:p.cond,power:p.power,limitType:p.effect.limitType,
+              exit:{cond:p.effect.exitCond,value:p.effect.exitVal}}]};
+        }
         // 手环：普通攻击攻击力 +N%（每回合）、普通攻击变为某属性
         else if(p.skill_type==='AttackUpOnlyNormal')eq.normalAttackUp+=pw;
         else if(p.skill_type==='AdditionalElementOnlyNormal'&&el)eq.normalElement=el.toLowerCase();
@@ -84,21 +91,39 @@ export function skillSlotCap(raw,role){
 export function membersFromDeck(deck,{catalog,equipment,stats=null,previous=[]}){
   const byId=new Map((equipment.entries||[]).map(e=>[e.sourceId,e]));
   const styleById=new Map(catalog.styles.map(s=>[s.id,s]));
+  const panelData={stats,equipment,catalog,equipmentById:byId};
   return Array.from({length:6},(_,i)=>{
     const m=deck.members[i];
     if(!m||!m.styleId)return {styleId:'',stats:{},front:i<3};
     const style=styleById.get(m.styleId);
-    const eq=equipmentFrom(m.accessories,byId,style?.role);
+    const eq=equipmentFrom(m.accessories,byId,style?.role,style&&{styleId:style.id,characterId:style.characterId});
     const prev=previous.find(p=>p.styleId===m.styleId);
     // 面板：能推算就用推算值（手动改过的项保留）；推算失败时沿用上次手填
     let computed=null;
     let vitals=prev?.vitals||null;
-    if(stats){const r=computePanel(m,{stats,equipment,catalog});if(r.final){computed=Object.fromEntries(STAT_KEYS.map(k=>[k,Math.round(r.final[k])]));vitals={dp:Math.round(r.final.dp),hp:Math.round(r.final.hp)};}}
+    if(stats){const r=computePanel(m,panelData);if(r.final){computed=Object.fromEntries(STAT_KEYS.map(k=>[k,Math.round(r.final[k])]));vitals={dp:Math.round(r.final.dp),hp:Math.round(r.final.hp)};}}
     const manual=prev?.statsManual||[];
     const merged=computed?{...computed,...Object.fromEntries(manual.filter(k=>prev?.stats?.[k]!=null).map(k=>[k,prev.stats[k]]))}:(prev?.stats||{});
     return {styleId:m.styleId,front:i<3,stats:merged,vitals,statsManual:computed?manual:[],statsSource:computed?'computed':'manual',raw:m,limitBreak:m.limitBreak??undefined,tearLevel:m.tearLevel||0,
-      initialSp:eq.initialSp,equipment:{earring:eq.earring,odEarringBonus:eq.odEarringBonus,necklaceAttack:eq.necklaceAttack,
+      initialSp:eq.initialSp,equipment:{earring:eq.earring,odEarringBonus:eq.odEarringBonus,necklaceAttack:eq.necklaceAttack,enemyTurnDefense:eq.enemyTurnDefense,
         ringElement:eq.ringElement,ringLevel:eq.ringLevel,skillCountUp:eq.skillCountUp,normalAttackUp:eq.normalAttackUp,normalElement:eq.normalElement},
       deckSkillIds:m.skillIds||[],supportStyleId:m.supportStyleId||null,supportLimitBreak:m.supportLimitBreak??null,source:`cache:${deck.index}`};
+  });
+}
+
+/** 旧排轴只重算由原始编队导出的数值，保留手填属性和已选择的技能、阵型及支援。 */
+export function withCurrentEquipment(members,data){
+  const raws=members.map(m=>m.raw?.accessories&&m.raw.styleId===m.styleId?m.raw:null);
+  if(!raws.some(Boolean))return members;
+  const updated=membersFromDeck({members:raws},{...data,previous:members});
+  return members.map((m,i)=>{
+    if(!raws[i])return m;
+    const eq=updated[i],out={...m,equipment:eq.equipment,initialSp:eq.initialSp};
+    const supportMatches=m.supportStyleId===undefined||m.supportStyleId===(raws[i].supportStyleId??null);
+    if(eq.statsSource==='computed'&&m.statsSource!=='manual'&&raws[i].card&&supportMatches){
+      out.stats=eq.stats;
+      out.vitals=eq.vitals;
+    }
+    return out;
   });
 }

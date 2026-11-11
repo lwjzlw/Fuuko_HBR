@@ -6,12 +6,55 @@ import {computeAttack,basePower,hitDistribution,earringBonus} from '../public/si
 import {buffSize,debuffSize} from '../public/sim/hbr/effects.mjs';
 import {attackModel,effectModel,powersByLevel} from '../public/sim/hbr/model.mjs';
 import {accessoryEffects,equipmentFrom,membersFromDeck} from '../public/sim/hbr/deck.mjs';
-import {buildParty,buildEnemy,initialState,cloneState,startTurn,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,act,usableSkills,effectiveCost,stateKey,NORMAL,bestTurnDamage} from '../public/sim/hbr/battle.mjs';
+import {buildParty,buildEnemy,initialState,cloneState,startTurn,startOverdrive,endOdRound,endPlayerTurn,startExtraTurn,endExtraTurn,act,usableSkills,effectiveCost,stateKey,NORMAL,bestTurnDamage,availableCommands,useCommand,setPhase,collectMods} from '../public/sim/hbr/battle.mjs';
 import * as R from '../public/sim/hbr/rules.mjs';
 import {search,replay} from '../public/sim/search.mjs';
 import {validatePlanner,membersFrom,emptyPlanner} from '../public/sim/party.mjs';
 
 const near=(a,b,eps=1e-9)=>Math.abs(a-b)<=eps*Math.max(1,Math.abs(a));
+
+test('published Yamawaki command is independent of actions and the six-servant Big Bang condition',()=>{
+  const catalog=JSON.parse(fs.readFileSync(new URL('../public/data/catalog.json',import.meta.url)));
+  const skills=JSON.parse(fs.readFileSync(new URL('../public/data/skills.json',import.meta.url)));
+  const f=fixtureParty({dp:1e8,hp:1e9}),enemy={...buildEnemy(f.event,f.stage),border:650};
+  const team=Array.from({length:5},(_,i)=>({...f.party[0],i,front:i<3}));
+  const [hero]=buildParty([{styleId:'BIYamawaki08',stats:team[0].stats,limitBreak:0,strictDeckSkills:true,deckSkillIds:[46003115,46003116]}],{catalog,skills});
+  hero.i=5;team.push(hero);
+  const other={...enemy,label:'second',name:'second',border:600};
+  const st=initialState(team,enemy,{trace:true,statusTypes:skills.statusTypes,critMode:'none'});
+  setPhase(st,[enemy,other]);assert.deepEqual(availableCommands(st),[]);
+  startTurn(st);const label='BIYamawakiSkill55b',before=cloneState(st),u=st.units[5],sp=u.sp;
+  assert.equal(availableCommands(st)[0].remaining,3);assert.equal(u.front,false);
+  assert.ok(!hero.skills.some(s=>s.label===label));
+  assert.equal(useCommand(st,0,label),null);assert.equal(st.units[5].commandRemaining,3);
+  u.effects.push({type:'attackUp',size:500,uses:1});
+  const stronger=cloneState(before);
+  stronger.ctx={...stronger.ctx,party:team.map((p,i)=>i===0?{...p,stats:{...p.stats,str:p.stats.str+400,dex:p.stats.dex+400}}:p)};
+  const cmd=useCommand(st,5,label),control=useCommand(before,5,label);
+  assert.equal(cmd.damage,control.damage);assert.equal(cmd.remaining,2);
+  assert.ok(useCommand(stronger,5,label).damage>cmd.damage,'another member contributes to the command damage');
+  assert.equal(u.effects.find(e=>e.type==='attackUp').uses,1);
+  assert.equal(u.sp,sp);assert.equal(u.played,0);assert.ok(!Object.keys(u.uses).length);
+  assert.equal(st.turn,1);assert.equal(st.round,'main');assert.equal(cmd.od,30);
+  assert.equal(st.log.filter(e=>e.t==='act').length,0);assert.equal(st.log.filter(e=>e.t==='command').length,1);
+  const commandKey=stateKey(st);u.commandRemaining++;assert.notEqual(stateKey(st),commandKey);u.commandRemaining--;
+  for(const q of st.queue)assert.equal(q.state.effects.find(e=>e.status==='FearOfDevil').size,100);
+  st.enemy.effects.push({type:'misfortune',size:90});
+  assert.equal(collectMods(st,5,{element:'nonelemental'}).misfortune,100);
+  useCommand(st,5,label);useCommand(st,5,label);assert.equal(st.od,90);
+  assert.equal(useCommand(st,5,label),null);
+  assert.equal(st.enemy.effects.filter(e=>e.status==='FearOfDevil').length,1);
+  endPlayerTurn(st);assert.ok(st.queue.every(q=>!q.state.effects.some(e=>e.status==='FearOfDevil')));
+  st.killedTurn=1;setPhase(st,[enemy]);assert.equal(st.units[5].commandRemaining,0);
+  const extra=cloneState(before);extra.units[0].extra=1;startExtraTurn(extra);assert.equal(availableCommands(extra)[0].s,label);
+  const od=cloneState(before);od.od=100;startOverdrive(od,1,'turnStart');assert.equal(availableCommands(od)[0].s,label);
+  const dance=hero.skills.findIndex(s=>s.label==='BIYamawakiSkill08'),bang=hero.skills.findIndex(s=>s.label==='BIYamawakiSkill55');
+  assert.equal(skills.statusTypes[155],'BIYamawakiServant');
+  assert.ok(!usableSkills(before,5).includes(bang));
+  before.units[2].front=false;before.units[5].front=true;
+  for(let target=0;target<5;target++){before.units[5].sp=20;act(before,5,dance,target);}
+  assert.ok(usableSkills(before,5).includes(bang));
+});
 
 // ---------------------------------------------------------------- 条件表达式
 test('expr: precedence, identifiers starting with digits, comparisons',()=>{
@@ -310,7 +353,7 @@ test('deck skill list resolves orb/master skills and equipped latent ability pas
   assert.deepEqual(p[0].skills.map(s=>s.label),['A1','Orb']);
   assert.ok(p[0].passives.some(x=>x.label==='L1'));
 });
-import {collectMods,normalAttackModel} from '../public/sim/hbr/battle.mjs';
+import {normalAttackModel} from '../public/sim/hbr/battle.mjs';
 import {evaluate as evalExpr} from '../public/sim/expr.mjs';
 function collectModsFor(st,i){return collectMods(st,i,{element:'nonelemental',physicalType:'slash'},{});}
 function evaluateIn(st,i,expr){
@@ -715,13 +758,51 @@ test('ally DP/HP: enemy attack formula, defense up until enemy turn end, heal, d
   assert.ok(near(st.units[0].dp,450));assert.ok(near(st.units[1].dp,1000-330),'defense up 40% survives our turn end');
   assert.ok(!st.units[1].effects.some(e=>e.type==='defenseUp'),'expires after enemy turn');
   startTurn(st);endPlayerTurn(st);
-  assert.equal(st.units[0].dp,0);assert.ok(near(st.units[0].hp,500-100));assert.equal(st.units[0].dpBroken,true);
+  assert.equal(st.units[0].dp,0);assert.equal(st.units[0].hp,500);assert.equal(st.units[0].dpBroken,true);
   assert.ok(usableSkills(st,0).length>0,'DP 0 (倒下) can still act');
   startTurn(st);endPlayerTurn(st);startTurn(st);endPlayerTurn(st);
   assert.equal(st.units[0].down,true);assert.deepEqual(usableSkills(st,0),[]);
   assert.ok(st.wiped>0,'any member at 0 HP = battle lost');
 });
 import {waveDamageScore,waveDifficultyScore,waveRoundScore,waveScore} from '../public/boss-model.mjs';
+test('incoming hits stop at the broken DP, then consume HP using published ratios and explicit fallbacks',()=>{
+  const publicSkill=(file,label)=>{
+    const event=JSON.parse(fs.readFileSync(new URL('../public/data/bosses/'+file,import.meta.url)));
+    return Object.values(event.enemies).flatMap(e=>e.skills).find(s=>s.label===label);
+  };
+  function take(skill,dp=150,hp=1000,{defense=false}={}){
+    const {party,event,stage}=fixtureParty({dp:10000,hp:10000});
+    party.forEach((p,i)=>{p.dpMax=1000;p.hpMax=hp;p.front=i===0;});
+    event.enemies.E.skills=[{...skill,id:1}];
+    const st=initialState(party,buildEnemy(event,stage),{trace:true,enemyVariance:1});
+    startTurn(st);st.units[0].dp=dp;
+    if(defense)st.units[0].effects.push({type:'defenseUp',size:50,uses:2,hitUses:true});
+    endPlayerTurn(st);
+    return {unit:st.units[0],log:st.log,approx:Object.keys(st.flags.approx).join(' ')};
+  }
+  const fixed=publicSkill('sa/scoreAttack99.json','ThorHammer2nd_scoreattack99_AttackSingle01');
+  assert.equal(fixed.hitCount,1);assert.deepEqual(fixed.parts[0].power,[99999,0]);
+  let r=take(fixed,1,100);
+  assert.equal(r.unit.dp,0);assert.equal(r.unit.hp,100);assert.equal(r.unit.down,false);
+  assert.equal(r.log.find(e=>e.t==='hurt').hpLost,0);
+  assert.ok(take(fixed,0,100).unit.down);
+
+  const ray=publicSkill('wave/WaveBattle0008.json','GiraffeHalo_AttackAll02_Thunder_waveBattle_08');
+  assert.deepEqual(ray.hitRatios,[0.1,0.1,0.1,0.1,0.6]);
+  const attack={...ray,parts:[{...ray.parts[0],power:[1000,1000],diffForMax:0}]};
+  r=take(attack);
+  assert.equal(r.unit.dp,0);assert.ok(near(r.unit.hp,200));
+  assert.equal(r.log.filter(e=>e.t==='dpBreak').length,1);assert.doesNotMatch(r.approx,/均分/);
+  r=take(attack,150,1000,{defense:true});
+  assert.equal(r.unit.effects.find(e=>e.hitUses).uses,1);assert.ok(near(r.unit.hp,650));
+
+  r=take({...attack,hitRatios:[]}); // 5×200，每段单独结算
+  assert.ok(near(r.unit.hp,200));assert.match(r.approx,/均分/);
+  r=take({...attack,hitRatios:[]},250);assert.ok(near(r.unit.hp,400));
+  assert.ok(near(take(attack,250).unit.hp,300));
+  r=take({...attack,hitRatios:[],hitCount:undefined},1);
+  assert.equal(r.unit.hp,1000);assert.match(r.approx,/暂按单段/);
+});
 test('encounter (wave) score matches the community sheet example',()=>{
   // 遭遇战出分计算.xlsx 示例：12.75/18.25/19.75/39.25/60 亿，回合分 32805、难度分 65000、×1.3
   const dm=[1275000000,1825000000,1975000000,3925000000,6000000000];
@@ -774,7 +855,7 @@ test('monte carlo: seeded, extends unfinished phases by repeating the last turn,
 
 // ---------------------------------------------------------------- 2026-11-09 技能格上限、#08 战术卡、显示伤害
 import {skillSlotCap} from '../public/sim/hbr/deck.mjs';
-import {CARDS,applyCard,relevantCards} from '../public/sim/cards.mjs';
+import {CARDS,applyCard,relevantCards,encounterCardSets} from '../public/sim/cards.mjs';
 import {cardSeenProb} from '../public/sim/optimizer.mjs';
 test('skill slot cap: 3 + reincarnation 1/5/10/20 + bloom + title rank 10 + admiral',()=>{
   const raw=(re,daphne,exp)=>({character:{reincarnation:re,titleExp:exp},card:{daphne}});
@@ -809,6 +890,13 @@ test('#08 tactical cards: 28 unique cards; applyCard copies the set; hooks chang
   assert.equal(st.enemy.effects.find(e=>e.status==='Disaster')?.level,2);
   assert.ok(cardSeenProb(1)>0.45&&cardSeenProb(1)<0.55&&cardSeenProb(3)>0.85);
 });
+test('joint card candidates use available combinations and award cards after phase one',()=>{
+  const pool=['breakerCrit100','breakerAtk200','breakerOd30','enemyStat100','zoneAtk300'];
+  assert.deepEqual(encounterCardSets(pool,5),[[null,...pool.slice(0,4)]]);
+  assert.deepEqual(encounterCardSets(pool,3),[[null,...pool.slice(0,2)]]);
+  assert.deepEqual(encounterCardSets(['zoneAtk300'],5),[]);
+});
+
 test('relevantCards: breaker/zone/heal cards only when the team can trigger them',()=>{
   const f=fixtureParty();
   const ids=relevantCards(f.party);

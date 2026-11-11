@@ -5,6 +5,7 @@
 //   合计 = ⌈(基础 + “+”列 + 潜在面板×2) × (1+战术%)⌋ + 战术固定值 + 饰品 + 增幅器与芯片 + 固有潜在 + 支援(支援卡面状态值的 10%)
 //   饰品：+6 的随机词条取各组最大值；吊饰按主词条 ID 末位；灵魂 5+4×强化；“+枠”每条 +3；HP 不吃战术%
 import {accessoryEffects} from './deck.mjs';
+import {canEquip} from '../../equipment.mjs';
 
 export const STAT_KEYS=['str','dex','con','spr','wis','luk'];
 const ALL=[...STAT_KEYS,'dp','hp'];
@@ -60,7 +61,7 @@ export function styleStatus(src,S,catalog,model=STAT_MODEL){
   rate.dp=styleData.base.dp||0;rate.hp=0;
   const B=zero(),value=zero();
   for(const k of ALL){B[k]=level[k]+reinc[k]+title[k]+shared[k]+lbBonus[k]+latent[k];value[k]=ceil(B[k]*(1+rate[k]/100))+flat[k];}
-  return {lv,rank,outfit,level,reinc,title,shared,lbBonus,latent,rate,flat,B,value,notes};
+  return {characterId:style.characterId,lv,rank,outfit,level,reinc,title,shared,lbBonus,latent,rate,flat,B,value,notes};
 }
 
 /**
@@ -82,11 +83,14 @@ export function computePanel(m,data,model=STAT_MODEL){
   push('rate',`战术型态 %（卡面+突破+本卡节点${m.card?.daphne?'+才能开花':''}${me.outfit?'+基本衣装完凸':''}）`,'rate',me.rate);
   push('flat','战术型态 固定值（本卡节点）','flat',me.flat);
   // ---- 饰品
-  const eqBy=new Map((data.equipment.entries||[]).map(e=>[e.sourceId,e]));
+  const eqBy=data.equipmentById||new Map((data.equipment.entries||[]).map(e=>[e.sourceId,e]));
   const gear=zero(),plus=zero();let soul=null;
+  const owner={styleId:m.styleId,characterId:me.characterId};
+  for(const slot of m.unresolvedAccessories||[])if(!m.accessories?.[slot])notes.push(`饰品 ${slot} 的编队记录未匹配库存`);
   for(const [slot,a] of Object.entries(m.accessories||{})){
     const e=eqBy.get(a.masterId);
     if(!e){notes.push(`饰品 ${slot}:${a.masterId} 不在目录`);continue;}
+    if(!canEquip(e,owner)){notes.push(`${e.name} 的专属限制与当前卡面不符`);continue;}
     if(slot==='soul')soul=a;
     else for(const f of accessoryEffects(e,a.main)){const k=TYPE_KEY[f.type];if(k)gear[k]+=Number(f.value?.[0])||0;}
     for(const x of a.expansion||[]){const e=EXPANSION[x];if(e)plus[e[0]]+=e[1];else notes.push(`饰品+枠 ${x} 未知`);}

@@ -2,7 +2,7 @@
 // 固定配队、特殊规则、单队排轴、逐回合设计器、伤害计算器收在“更多细致选项”里。
 // 规则与公式按社区计算器 hbr-calculator.com（Calculator + Planner 模块）重写，见 public/sim/hbr/。
 import {buildParty,buildEnemy,initialState,applyEffectsOnly,previewAttack} from './sim/hbr/battle.mjs';
-import {membersFromDeck} from './sim/hbr/deck.mjs';
+import {membersFromDeck,withCurrentEquipment} from './sim/hbr/deck.mjs';
 import {computePanel} from './sim/hbr/stats.mjs';
 import {ATTACK_PART_TYPES} from './sim/hbr/model.mjs';
 import {STATS} from './sim/hbr/rules.mjs';
@@ -14,7 +14,9 @@ import {designFromPlan,emptyDesign} from './sim/designer.mjs';
 import {cardById} from './sim/cards.mjs';
 import {cardSeenProb} from './sim/optimizer.mjs';
 import {axisView} from './planner-axis.mjs';
-import {loadoutDetailsHtml} from './planner-loadout.mjs';
+import {loadoutDetailsHtml,equipmentDetails} from './planner-loadout.mjs';
+import {gearSlots,availableGear,changeAccessory,importMember} from './planner-gear.mjs';
+import {partyContextKey,setPlannerMembers} from './planner-results.mjs';
 import {TEAM_ELEMENTS,normalizeResultSettings,packOptimizationResult,scoreGap,ruleCombinations,successfulScores,optimizationScope,reusableCandidates,visibleCandidates} from './planner-results.mjs';
 import {SEARCH_PRESETS} from './sim/optimizer-options.mjs';
 import {plannerPhases,plannerStages,withEnemyParameters,enemyParameterKey,enemyContextKey,BATTLE_MODEL_VERSION,resultMatchesEnemies,sameRuleIds} from './planner-enemies.mjs';
@@ -47,7 +49,8 @@ export function createPlannerUI(ctx){
     if(!events.has(entry.file)){const r=await fetch('/data/bosses/'+entry.file,{cache:'no-store'});if(!r.ok)throw Error('Boss 数据 HTTP '+r.status);events.set(entry.file,withEnemyParameters(await r.json(),enemyParameters));}
     return events.get(entry.file);
   }
-  let settingsLoaded=false,openPanel=null;
+  let settingsLoaded=false,openPanel=null,gearSlot='jewel',selectedDeck=null;
+  const gearById=new Map((equipment.entries||[]).map(item=>[Number(item.sourceId),item]));
   // 档案里的搜索设置只在首次读入；之后以页面上的修改为准（否则每次重绘都会被旧设置覆盖）
   function planner(){const a=getArchive();if(!a.planner)a.planner=emptyPlanner();if(!settingsLoaded){Object.assign(opt,a.planner.settings||{});settingsLoaded=true;}return a.planner;}
 
@@ -185,12 +188,12 @@ export function createPlannerUI(ctx){
     q('.pl-more').addEventListener('toggle',ev_=>{moreOpen=ev_.target.open;});
     if(q('#opt-run'))q('#opt-run').onclick=()=>runOptimize(host,ev,stage);
     if(q('#opt-stop'))q('#opt-stop').onclick=()=>{optWorker?.terminate();optWorker=null;optProgress=null;mount(host);};
-    const setOpt=(id,key,get=x=>x.checked)=>{const el=q(id);if(el)el.onchange=()=>{optOpt[key]=get(el);saveOpt();if(['scale','searchRules','minSuccess','minSuccessBasis'].includes(key))mount(host);};};
-    setOpt('#opt-scale','scale',x=>x.value);setOpt('#opt-goal','goal',x=>x.value);
+    const setOpt=(id,key,get=x=>x.checked)=>{const el=q(id);if(el)el.onchange=()=>{optOpt[key]=get(el);saveOpt();if(['scale','searchRules','minSuccess','minSuccessBasis','fixedTeam','keepLoadout'].includes(key))mount(host);};};
+    setOpt('#opt-scale','scale',x=>x.value);setOpt('#opt-goal','goal',x=>x.value);setOpt('#opt-max-turns','maxTurns',x=>Math.max(1,Math.min(30,Math.trunc(Number(x.value)||6))));
     setOpt('#opt-element','teamElement',x=>x.value);setOpt('#opt-top','top',x=>Number(x.value));
     setOpt('#opt-min-success','minSuccess',x=>Math.max(0,Math.min(100,Number(x.value)||0))/100);
     setOpt('#opt-success-basis','minSuccessBasis',x=>x.value);
-    setOpt('#opt-fixed','fixedTeam');setOpt('#opt-rules','searchRules');setOpt('#opt-orbs','allOrbs');
+    setOpt('#opt-fixed','fixedTeam');setOpt('#opt-keep-loadout','keepLoadout');setOpt('#opt-rules','searchRules');setOpt('#opt-orbs','allOrbs');
     setOpt('#opt-cards','optimizeCards');setOpt('#opt-overkill','overkill');
     if(q('#pl-wave-difficulty'))q('#pl-wave-difficulty').onchange=ev_=>{
       const P=planner();P.waveSettings={difficulty:40,international:true,...P.waveSettings,difficulty:Math.max(1,Math.min(40,Math.round(Number(ev_.target.value))||40))};save();mount(host);
@@ -236,12 +239,12 @@ export function createPlannerUI(ctx){
   // ---------------------------------------------------------------- 求最佳轴（配置优化：队伍 / 规则 / 技能 / 饰品 / 战术卡 + 排轴）
   let cachePool=null,optWorker=null,optProgress=null,optResult=null,optResultKey='';
   const OPT_SCALE=SEARCH_PRESETS;
-  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10,minSuccess:0,minSuccessBasis:'onPlan'};
+  const optOpt={maxTurns:6,scale:'standard',broad:true,fixedTeam:false,keepLoadout:true,optimizeCards:true,overkill:true,goal:'score',searchRules:true,allOrbs:true,teamElement:'',top:10,minSuccess:0,minSuccessBasis:'onPlan'};
   const GOALS={score:'最高分（通关均分）',stable:'最稳（成功率优先）',fast:'最少回合'};
   const optStepLabel={evaluate:'评估候选',evolve:'改进候选',final:'深排与少量随机模拟',incumbent:'复评已有方案'};
   const optProgressText=x=>`${optStepLabel[x.step]||x.step}${x.total>0?` ${Math.max(0,Math.min(x.total,x.done))}/${x.total}${x.step==='evolve'?' 次评估':''}`:''} · ${x.label} · 已用 ${(x.elapsed/1000).toFixed(0)} 秒`;
   const pct=x=>x==null?'—':`${Math.round(x*100)}%`;
-  function saveOpt(){const P=planner();P.optSettings={scale:optOpt.scale,goal:optOpt.goal,fixedTeam:optOpt.fixedTeam,searchRules:optOpt.searchRules,allOrbs:optOpt.allOrbs,optimizeCards:optOpt.optimizeCards,overkill:optOpt.overkill,...normalizeResultSettings(optOpt)};save();}
+  function saveOpt(){const P=planner();P.optSettings={scale:optOpt.scale,goal:optOpt.goal,fixedTeam:optOpt.fixedTeam,keepLoadout:optOpt.keepLoadout,maxTurns:optOpt.maxTurns,searchRules:optOpt.searchRules,allOrbs:optOpt.allOrbs,optimizeCards:optOpt.optimizeCards,overkill:optOpt.overkill,...normalizeResultSettings(optOpt)};save();}
   function resultsFor(key){return optResultKey===key&&optResult?optResult:(planner().lastOptimization?.targetKey===key?planner().lastOptimization:null);}
   const goalFor=ev=>ev.kind==='wave'||optOpt.goal!=='score'?optOpt.goal:'stable';
 
@@ -251,11 +254,13 @@ export function createPlannerUI(ctx){
     const goal=goalFor(ev);
     return `<div class="field-grid three">
   <label>搜索投入<select id="opt-scale" ${optWorker?'disabled':''}>${Object.entries(OPT_SCALE).map(([k,v])=>`<option value="${k}" ${optOpt.scale===k?'selected':''}>${v.label} · 最多 ${v.searchEvals} 次改进</option>`).join('')}</select></label>
+  <label>每阶段最多普通回合<input id="opt-max-turns" type="number" min="1" max="30" step="1" value="${optOpt.maxTurns}" ${optWorker?'disabled':''}></label>
   <label>以什么为准<select id="opt-goal" ${optWorker?'disabled':''}>${Object.entries(GOALS).filter(([k])=>wave||k!=='score').map(([k,v])=>`<option value="${k}" ${goal===k?'selected':''}>${v}</option>`).join('')}</select></label>
 </div>
 <div class="pl-checks">
-  <label class="inline"><input id="opt-fixed" type="checkbox" ${optOpt.fixedTeam?'checked':''}>固定当前配队（不换人，只排轴和挑技能/饰品）</label>
-  <label class="inline"><input id="opt-orbs" type="checkbox" ${optOpt.allOrbs?'checked':''}>宝玉技能全部可用</label>
+  <label class="inline"><input id="opt-fixed" type="checkbox" ${optOpt.fixedTeam?'checked':''} ${optWorker?'disabled':''}>固定当前六人</label>
+  ${optOpt.fixedTeam?`<label class="inline"><input id="opt-keep-loadout" type="checkbox" ${optOpt.keepLoadout?'checked':''} ${optWorker?'disabled':''}>保留当前装备、支援卡和已装技能</label>`:''}
+  <label class="inline"><input id="opt-orbs" type="checkbox" ${optOpt.allOrbs&&!(optOpt.fixedTeam&&optOpt.keepLoadout)?'checked':''} ${optOpt.fixedTeam&&optOpt.keepLoadout?'disabled':''}>允许选用其他宝玉技能</label>
   ${wave?`<label class="inline"><input id="opt-cards" type="checkbox" ${optOpt.optimizeCards?'checked':''}>挑战术卡</label><label class="inline"><input id="opt-overkill" type="checkbox" ${optOpt.overkill?'checked':''}>伤害分计溢出（推定）</label>`:''}
   ${rules.length?`<label class="inline"><input id="opt-rules" type="checkbox" ${optOpt.searchRules?'checked':''}>特殊规则也自动选</label>`:''}
 </div>
@@ -271,17 +276,22 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
     const R=resultsFor(k),wave=ev.kind==='wave';
     const selected=R?.selected??bestIdx;
     const design=P.designs?.[k];
-    const hasAxis=design?.phases?.some(p=>p.turns?.some(t=>t.actions?.some(a=>a.s)||t.odStart||t.odEnd));
+    const hasAxis=design?.phases?.some(p=>p.turns?.some(t=>t.actions?.some(a=>a.s)||t.commands?.length||t.extraCommands?.length||t.odStart||t.odEnd));
     if(!hasAxis&&!R)return `<div class="pl-empty"><h2>还没有这一期的轴</h2><p class="subtle">点上面的「求最佳轴」。会自动读取本机游戏缓存（只读）里的已持有卡面、饰品和当前编队。</p></div>`;
     let contextKey=null;try{contextKey=enemyContextKey(phasesFor(ev,stage,[]),contextOptions(ev));}catch{}
     const activeRules=ev.kind==='scoreAttack'||ev.kind==='wave'?sel.rules:(stage.rules||[]).map(r=>r.id);
-    const resultStale=R&&!resultMatchesEnemies(R,contextKey),summaryStale=summary&&(!resultMatchesEnemies(summary,contextKey)||!sameRuleIds(summary.ruleIds,activeRules));
+    const resultStale=R&&!resultMatchesEnemies(R,contextKey);
+    const partyChanged=summary?.partyContextKey&&summary.partyContextKey!==partyContextKey([P.members,design]);
+    const summaryStale=summary&&(partyChanged||!resultMatchesEnemies(summary,contextKey)||!sameRuleIds(summary.ruleIds,activeRules));
     const rows=resultStale?[]:visibleCandidates(R,optOpt),basisName=optOpt.minSuccessBasis==='success'?'通关率（含续打）':'照轴完成率';
     const maxScore=rows.length?Math.max(...rows.map(({candidate:t})=>successfulScores(t.mc).mean??0)):0;
     const legacyScores=wave&&R?.top?.some(t=>successfulScores(t.mc).converted);
     const thresholdNote=R&&optOpt.minSuccess>0?`<p class="subtle compact">按${basisName} ≥ ${pct(optOpt.minSuccess)} 筛选，当前保留 ${rows.length} 个候选${R.rejectedBySuccess?`；搜索结束时另有 ${R.rejectedBySuccess} 条轴未达到当时下限`:''}。${rows.length?'':'可降低下限或提高搜索投入后重新搜索。'}</p>`:'';
+    const attempt=!resultStale&&R?.attempt;
+    const failedAttempt=attempt&&(!rows.length||!rows.some(x=>x.candidate.mc.success>0));
+    const failureText=failedAttempt?`<p class="subtle compact">本次复评的参考轴在期望伤害下清了 ${attempt.cleared}/${attempt.phases} 个阶段。随机重放 ${attempt.mc.n} 次，照轴完成 ${pct(attempt.mc.onPlan)}，含续打通关 ${pct(attempt.mc.success)}。${Object.entries(attempt.mc.fails||{}).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([reason,count])=>e(reason)+' '+count+' 次').join('，')}</p>`:'';
     const currentBelow=!summaryStale&&summary&&optOpt.minSuccess>0&&!(satisfiesThreshold(summary,optOpt))?`<p class="pill-error">当前采用方案低于所选成功率下限。可从合格候选中重新选择，或重新搜索。</p>`:'';
-    const staleNote=resultStale||summaryStale?'<p class="pill-error">敌方参数、计分设置、规则或战斗模型已更新，旧均分和成功率暂不作为有效结果。旧轴保留供查看；请重新搜索，以当前模型复评。</p>':'';
+    const staleNote=resultStale||summaryStale?'<p class="pill-error">配队、排轴或计算条件已变更，旧均分和成功率暂不作为有效结果。重新搜索可按当前配置复评。</p>':'';
     const chips=rows.length?`<p class="subtle compact">${legacyScores?'保留历史搜索顺序':'本次按'+e(GOALS[R.goal]||'模拟结果')+'排列'} · ${R.teamElement?ELEM_LABEL[R.teamElement]+'属性':'不限属性'} · ${rows.length} 个候选。点击可切换配队与排轴，最近一批结果会保存在本机。</p>
     <div class="pl-plans">${rows.map(({candidate:t,index:i})=>{const sc=successfulScores(t.mc),gap=scoreGap(maxScore,sc.mean);return `<button type="button" class="pl-plan${i===selected?' active':''}" data-opt-use="${i}" aria-pressed="${i===selected}">
       <b>候选 ${i+1}${i===selected?' · 已采用':''}</b>${t.newTeam?'<span class="tag">新队伍</span>':''}<span>按轴 ${pct(t.mc.onPlan)} · 通关 ${pct(t.mc.success)}</span><span>失败 ${sc.successes==null||t.mc.n==null?'—':t.mc.n-sc.successes}/${t.mc.n??'?'} 次</span>${wave?`<span>${sc.mean!=null?`通关均分 ${n(Math.round(sc.mean))} · ${sc.samples??'?'} 个成功样本${gap>=0.5?` · 距最高 ${n(Math.round(gap))}`:''}`:'暂无通关分数'}</span>`:''}<span>${t.mc.turnsMedian??t.turns} 回合${t.teamElement?` · ${ELEM_LABEL[t.teamElement]||t.teamElement} ${pct(t.elementShare)}`:''}</span></button>`;}).join('')}</div>${legacyScores?'<p class="subtle compact">旧均分已剔除失败的零分；重新搜索会用新样本复评已有轴并更新排序。</p>':''}`:'';
@@ -292,8 +302,8 @@ ${rules.map(r=>`<label class="inline rule-pick"><input type="checkbox" data-pl-r
       else{const v=axisView({e,n,party:c.party,phases:c.phases,statusTypes:skills.statusTypes,design,critMode:'expected'});axis=v.html;sum=v.summary;}
     }
     const s=summary||{},scores=successfulScores({...s,n:s.samples});
-    const team=(s.team||[]).map(x=>`<span class="pl-member">${e(x)}</span>`).join('');
-    const loadout=(s.loadout||[]).length?`<details class="pl-loadout" open><summary>配置详情：队伍、技能、饰品、支援卡${wave&&s.cardNames?.some(Boolean)?'、战术卡':''}</summary>
+    const team=summaryStale?'':(s.team||[]).map(x=>`<span class="pl-member">${e(x)}</span>`).join('');
+    const loadout=!summaryStale&&(s.loadout||[]).length?`<details class="pl-loadout" open><summary>配置详情：队伍、技能、饰品、支援卡${wave&&s.cardNames?.some(Boolean)?'、战术卡':''}</summary>
 ${wave&&s.cardNames?.some(Boolean)?`<p class="compact">${s.cardNames.map((c,p)=>p&&c?`第 ${p+1} 阶段前选 <b>${e(c)}</b>`:'').filter(Boolean).join('　')}</p>`:''}
 <div class="pl-loadout-grid">${s.loadout.map((m,i)=>`<article class="pl-loadout-member"><h3><span class="tag">${m.front?'前卫':'后卫'}</span> ${e(m.name)}${m.isNew?' <span class="tag">新换上</span>':''}</h3>
 <p class="compact">${m.skillsChanged?'<span class="tag">技能需调整</span> ':''}技能：${e(m.skills.join('、'))} <small class="subtle">（${m.skills.length}/${m.cap??'?'} 格）</small></p>
@@ -310,7 +320,7 @@ ${loadoutDetailsHtml(P.members[i],{equipment,catalog,stats:statsData},e)}<p clas
     </div>`:sum?`<div class="pl-best-stats"><div><strong>${sum.turns}</strong><span>回合</span></div><div><strong>${sum.cleared}/${sum.phases}</strong><span>击破</span></div></div>`:'';
     return `<div class="split-heading"><h2 title="${e(s.label||'')}">当前方案${summary?` <small class="subtle">${s.newTeam?'新组的队伍 · ':''}${s.at?new Date(s.at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 求出':''}</small>`:''}</h2>
   ${hasAxis?'<button id="pl-edit" class="quiet" type="button">逐回合修改</button>':''}</div>
-${staleNote}${thresholdNote}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
+${staleNote}${thresholdNote}${failureText}${currentBelow}${chips}${stats}${team?`<div class="pl-team">${team}</div>`:''}
 <div class="pl-axis">${axis}</div>
 ${loadout}
 ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.screened??R.evaluated}），${R.threads??1} 个线程，用时 ${(R.elapsed/1000).toFixed(0)} 秒${(R.errorCount||R.errors?.length)?`；${R.errorCount||R.errors.length} 个候选出错`:''}。启发式搜索不保证全局最优；分数和成功率来自有限样本的社区公式模拟，小分差可能是抽样波动，不是游戏实测。</p>`:''}`;
@@ -330,11 +340,11 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
   function adopt(i,ev,stage){
     const R=resultsFor(designKey(ev,stage)),t=R?.top?.[i];if(!t)return;
     const P=planner();
-    P.members=structuredClone(t.members);
+    setPlannerMembers(P,structuredClone(t.members));
     if(Array.isArray(t.ruleIds))sel.rules=t.ruleIds.slice();
     const k=designKey(ev,stage);
     P.designs=P.designs||{};P.designs[k]=structuredClone(t.design);
-    P.best=P.best||{};P.best[k]=bestSummary(t,R);
+    P.best=P.best||{};P.best[k]={...bestSummary(t,R),partyContextKey:partyContextKey([P.members,P.designs[k]])};
     bestIdx=i;R.selected=i;if(P.lastOptimization?.targetKey===k)P.lastOptimization.selected=i;persist();saveSel();
   }
   async function ensureCache(){
@@ -352,7 +362,7 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     // 研究室里还没有完整配队时，先用游戏里当前的编队当起点
     if(!membersFrom(P,getArchive(),catalog).ready){
       const d=cachePool.decks.find(x=>x.current&&x.members.filter(Boolean).length===6)||cachePool.decks.find(x=>x.members.filter(Boolean).length===6);
-      if(d)P.members=membersFromDeck(d,{catalog,equipment,stats:statsData,previous:P.members});
+      if(d)setPlannerMembers(P,membersFromDeck(d,{catalog,equipment,stats:statsData,previous:P.members}));
     }
     const c=buildCtx(ev,stage);
     if(c.error){optWorker=null;optProgress=null;notice(c.error,true);mount(host);return;}
@@ -384,7 +394,8 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
         if(x.stage==='done'){optResult={...x.result,targetKey:k,scopeKey:input.opts.scopeKey,battleVersion:input.opts.battleVersion,enemyContextKey:input.opts.enemyContextKey,teamElement:input.opts.teamElement,selected:0};bestIdx=0;
           const current=planner();current.lastOptimization=packOptimizationResult(k,optResult,input.opts);
           if(optResult?.top?.length){
-            if(current===P&&JSON.stringify(current.members)===originalMembers){adopt(0,ev,stage);notice(`本次找到 ${optResult.top.length} 个候选，已采用第 1 个，模拟成功率 ${pct(optResult.top[0].mc.success)}。可点击其他候选比较。`);}
+            if(!optResult.top.some(t=>t.mc.success>0)){optResult.selected=-1;current.lastOptimization.selected=-1;save();notice('本次候选在随机重放中均未通关。保留了当前轴，可点选候选查看卡在哪个阶段。');}
+            else if(current===P&&JSON.stringify(current.members)===originalMembers){adopt(0,ev,stage);notice(`本次找到 ${optResult.top.length} 个候选，已采用第 1 个，模拟成功率 ${pct(optResult.top[0].mc.success)}。可点击其他候选比较。`);}
             else{optResult.selected=-1;current.lastOptimization.selected=-1;save();notice(`本次找到 ${optResult.top.length} 个候选。求解期间档案或配队有更新，已保留你的改动；点击候选后采用。`);}}
           else{save();notice(`本次没有找到${input.opts.teamElement?ELEM_LABEL[input.opts.teamElement]+'属性的':''}合适方案${input.opts.minSuccess>0?`（${input.opts.minSuccessBasis==='onPlan'?'照轴完成率':'含续打通关率'}至少 ${pct(input.opts.minSuccess)}）`:''}。可降低成功率下限、提高搜索投入或调整配队；搜索无结果不代表不存在。`,true);}}
         else notice('求解失败：'+x.message,true);
@@ -406,7 +417,8 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
   }
   function deckPicker(){
     if(decks.error)return `<p class="pill-error">${e(decks.error)}</p>`;
-    return `<div class="inline deck-pick"><label>游戏编队<select id="pl-deck">${decks.list.map(d=>`<option value="${d.index}">${d.index}「${e(d.name)}」${d.current?'（当前）':''} · ${d.members.filter(Boolean).map(m=>e(catalog.characters.find(c=>c.id===m.characterId)?.name||'?')).join('、')}</option>`).join('')}</select></label><button id="pl-deck-apply" type="button">导入这一套</button><small class="subtle">读取于 ${e(decks.readAt||'')}</small></div>`;
+    const active=decks.list.find(d=>d.index===selectedDeck)||decks.list.find(d=>d.current)||decks.list[0];
+    return `<div class="inline deck-pick"><label>游戏编队<select id="pl-deck">${decks.list.map(d=>`<option value="${d.index}" ${d===active?'selected':''}>${d.index}「${e(d.name)}」${d.current?'（当前）':''} · ${d.members.filter(Boolean).map(m=>e(catalog.characters.find(c=>c.id===m.characterId)?.name||'?')).join('、')}</option>`).join('')}</select></label><button id="pl-deck-apply" type="button">导入这一套</button><button id="pl-deck-search" type="button" ${optWorker||active?.members.filter(Boolean).length!==6?'disabled':''}>按这队原装搜轴</button><small class="subtle">读取于 ${e(decks.readAt||'')}</small></div>`;
   }
   function styleOptions(current){
     const a=getArchive();
@@ -430,8 +442,21 @@ ${R?`<p class="subtle compact">比较了 ${R.evaluated} 个候选（粗筛 ${R.s
     const src=m.raw?(m.statsManual?.length?`推算（手改 ${m.statsManual.map(k=>STAT_LABEL[k]).join('、')}）`:'推算（游戏缓存）'):'手填';
     return `<span class="tag">${e(src)}</span> ${m.raw?`<button class="link" data-pl-panel="${i}" type="button">${openPanel===i?'收起明细':'配置与面板'}</button>${m.statsManual?.length?` <button class="link" data-pl-reset="${i}" type="button">恢复推算</button>`:''}`:''}<br>${e(equipText(m))}`;
   }
+  function gearEditor(m){
+    if(!cachePool)return '<button id="pl-gear-cache" type="button">读取饰品库存</button>';
+    const choices=availableGear(planner().members,openPanel,gearSlot,cachePool.accessories,gearById);
+    const current=m.raw.accessories?.[gearSlot];
+    const currentName=gearById.get(Number(current?.masterId))?.name||(current?'未识别装备':m.raw.unresolvedAccessories?.includes(gearSlot)?'编队装备未匹配库存':'未装备');
+    const labels=choices.map(item=>{
+      const row=equipmentDetails({raw:{...m.raw,accessories:{[gearSlot]:item}}},equipment).find(r=>r.slot===gearSlot);
+      return [row.name,...row.lines.filter(t=>t.startsWith('主词条：')||t.startsWith('固定：')||t.startsWith('孔位：')&&item.expansion?.length)].join(' · ');
+    });
+    const sources=cachePool.decks.filter(d=>d.members.some(x=>x?.styleId===m.styleId));
+    const sourcePicker=sources.length?`<label>套用此卡的游戏编队配置<select id="pl-member-loadout"><option value="">选择编队…</option>${sources.map(d=>`<option value="${d.index}">${d.index}「${e(d.name)}」</option>`).join('')}</select></label>`:'';
+    return `<div class="pl-gear-editor"><label>饰品部位<select id="pl-gear-slot">${Object.entries(gearSlots).map(([k,v])=>`<option value="${k}" ${gearSlot===k?'selected':''}>${v}</option>`).join('')}</select></label><label>研究室配装<select id="pl-gear-item"><option value="">当前 · ${e(currentName)}</option>${labels.map((label,i)=>`<option value="${i}">${e(label)}</option>`).join('')}<option value="remove">卸下此部位</option></select></label>${sourcePicker}</div>`;
+  }
   function panelHtml(m){
-    const config=loadoutDetailsHtml(m,{equipment,catalog,stats:statsData},e);
+    const config=loadoutDetailsHtml(m,{equipment,catalog,stats:statsData},e)+gearEditor(m);
     const r=computePanel(m.raw,{stats:statsData,equipment,catalog});
     if(!r.final)return config+`<p class="subtle">${e(r.notes.join('；'))}</p>`;
     const fmt=v=>Math.round(v*10)/10;
@@ -467,7 +492,8 @@ ${STATS.map(k=>`<td><input class="stat-input" type="number" min="0" max="99999" 
     return ruleCombinations(ev.rules||[],ev.maxRules??1);
   }
   function buildCtx(ev,stage){
-    const P=planner(),{members,ready,issues}=membersFrom(P,getArchive(),catalog);
+    const P=planner(),current=withCurrentEquipment(P.members,{catalog,equipment,stats:statsData});
+    const {members,ready,issues}=membersFrom({...P,members:current},getArchive(),catalog);
     if(!ready)return {error:'队伍未就绪：'+issues.join('；')};
     try{
       // 旧档案没有 DP/HP：从编队原始数据现算（面板推算），算不出时该成员不计受伤
@@ -563,7 +589,7 @@ ${flags.length?`<details><summary>未支持／近似处理的机制（${flags.le
 <li><b>伤害</b>（社区 Calculator）：基础威力按“加权能力−基准”对参数上限分段（超出每点 +0.25%）；技能攻击/领域/心眼(弱点)/蓄力/士气/项链/戒指/耳环同组相加；防御下降与脆弱(弱点)同组；物理×属性弱点；暴击基准−50、×(1.5+暴伤)、基础暴击率 min(10%,1.5%+(运−基准)×0.04%)；连击为追加段；破坏率按段累计；单段 10 亿软上限。</li>
 <li><b>效果量</b>：增益按施放者加权能力（不减基准），减益按能力−基准；泪、效果量上升按原式。同类增益最多 2 个（[单独发动] 占满），被动不占槽；取效果量最大的组合。</li>
 <li><b>回合</b>（社区 Planner）：普通回合全员 SP+2（已 ≥20 不加）；OD 首轮全员 SP +5/+12/+20、OD 轮各算一回合；每段 OD +2.5%（DRIVE 耳环按段数加成），普攻按 3 段，被抗不加 OD；追加回合不加 SP，只给获得者计时；仅本轮/次数/回合数/永久四种持续。</li>
-<li><b>仍为推定</b>：普通攻击威力（300–600、力2灵巧1）；敌方按行动表顺序循环；“每 N 回合”规则首次在第 N 回合；计分公式取自 hbr.quest；泪等级取缓存 _daphneUsedNum；增益超过 2 个时保留效果量最大的。</li>
+<li><b>仍为推定</b>：普通攻击威力（300–600、力2灵巧1）；敌方按行动表顺序循环；我方破盾按命中逐段结算，敌技能缺少各段权重时均分；跨阶段保留 OD 量表，未用完的 OD 行动轮暂不额外计入；“每 N 回合”规则首次在第 N 回合；计分公式取自 hbr.quest；泪等级取缓存 _daphneUsedNum；增益超过 2 个时保留效果量最大的。</li>
 <li><b>主数据与社区表的差异</b>：部分技能 Lv1 威力取整、少数技能破坏倍率/对 HP 倍率/[单独发动]增益数值与社区（国际服）表不同，以主数据为准。</li></ul>`;
   }
 
@@ -578,7 +604,22 @@ ${flags.length?`<details><summary>未支持／近似处理的机制（${flags.le
     on('#pl-stage','change',x=>{sel.stage=Number(x.target.value);sel.enemy='';saveSel();mount(host);});
     on('#pl-enemy','change',x=>{sel.enemy=x.target.value;saveSel();mount(host);});
     host.querySelectorAll('[data-pl-rule]').forEach(c=>c.onchange=()=>{const id=Number(c.dataset.plRule),max=ev?.maxRules||1;sel.rules=c.checked?[...sel.rules.filter(x=>x!==id),id].slice(-max):sel.rules.filter(x=>x!==id);saveSel();mount(host);});
-    host.querySelectorAll('[data-pl-style]').forEach(s=>s.onchange=()=>{const m=P.members[Number(s.dataset.plStyle)];m.styleId=s.value;delete m.equipment;delete m.deckSkillIds;m.initialSp=0;m.tearLevel=0;mount(host);});
+    function useMember(i,source,deck){
+      const {member,omitted}=importMember(P.members,i,source,cachePool,{catalog,equipment,stats:statsData});
+      setPlannerMembers(P,P.members.map((m,slot)=>slot===i?member:m));
+      notice(`已载入${deck?'编队 '+deck.index+' 中的':'已持有'}卡面配置。${omitted.length?'这些部位没有可分配的同款同词条库存，已留空：'+omitted.join('、')+'。':''}`);
+      persist();mount(host);
+    }
+    host.querySelectorAll('[data-pl-style]').forEach(s=>s.onchange=async()=>{
+      const i=Number(s.dataset.plStyle),id=s.value;
+      if(id){
+        if(!cachePool)await ensureCache();
+        const deck=cachePool?.decks.find(d=>d.members.some(m=>m?.styleId===id));
+        const raw=deck?.members.find(m=>m?.styleId===id)||cachePool?.cards.find(m=>m.styleId===id);
+        if(raw){useMember(i,raw,deck);return;}
+      }
+      setPlannerMembers(P,P.members.map((m,slot)=>slot===i?{styleId:id,stats:{},front:m.front}:m));persist();mount(host);
+    });
     host.querySelectorAll('[data-pl-front]').forEach(c=>c.onchange=()=>{P.members[Number(c.dataset.plFront)].front=c.checked;q('#pl-issues').innerHTML=issuesHtml(P);recalc();});
     host.querySelectorAll('[data-pl-stat]').forEach(inp=>inp.onchange=()=>{
       const [i,k]=inp.dataset.plStat.split(':');const v=inp.value.trim(),m=P.members[Number(i)];m.stats=m.stats||{};
@@ -592,14 +633,37 @@ ${flags.length?`<details><summary>未支持／近似处理的机制（${flags.le
       root.querySelectorAll('[data-pl-reset]').forEach(b=>b.onclick=()=>{const m=P.members[Number(b.dataset.plReset)];const r=computePanel(m.raw,{stats:statsData,equipment,catalog});if(r.final){for(const k of STATS)m.stats[k]=Math.round(r.final[k]);m.statsManual=[];}persist();mount(host);});
     };
     bindPanelButtons(host);
+    on('#pl-gear-cache','click',async()=>{await ensureCache();mount(host);});
+    on('#pl-member-loadout','change',x=>{
+      if(x.target.value===''||openPanel==null)return;
+      const deck=cachePool.decks.find(d=>d.index===Number(x.target.value));
+      const source=deck?.members.find(m=>m?.styleId===P.members[openPanel].styleId);
+      if(source)useMember(openPanel,source,deck);
+    });
+    on('#pl-gear-slot','change',x=>{gearSlot=x.target.value;mount(host);});
+    on('#pl-gear-item','change',x=>{
+      const value=x.target.value;if(value===''||openPanel==null)return;
+      const items=availableGear(P.members,openPanel,gearSlot,cachePool.accessories,gearById);
+      const item=value==='remove'?null:items[Number(value)];if(item===undefined)return;
+      P.members[openPanel]=changeAccessory(P.members[openPanel],gearSlot,item,{catalog,equipment,stats:statsData});persist();mount(host);
+    });
     on('#pl-save','click',()=>{persist();notice('排轴器队伍已保存到档案。');});
     on('#pl-decks','click',async()=>{
       try{const r=await cacheDecks();decks={list:r.decks,readAt:r.read_at};cachePool={decks:r.decks,cards:r.cards||[],accessories:r.accessories||[]};}catch(err){decks={error:'读取游戏编队失败：'+err.message};}
       mount(host);
     });
+    on('#pl-deck','change',x=>{selectedDeck=Number(x.target.value);mount(host);});
+    on('#pl-deck-search','click',()=>{
+      const d=decks?.list?.find(x=>x.index===Number(q('#pl-deck').value));
+      if(!d||optWorker||d.members.filter(Boolean).length!==6)return;
+      setPlannerMembers(P,membersFromDeck(d,{catalog,equipment,stats:statsData}));
+      for(const m of P.members)m.strictDeckSkills=true;
+      optOpt.fixedTeam=true;optOpt.keepLoadout=true;saveOpt();decks=null;
+      runOptimize(host,ev,stage);
+    });
     on('#pl-deck-apply','click',()=>{
       const d=decks?.list?.find(x=>x.index===Number(q('#pl-deck').value));if(!d)return;
-      P.members=membersFromDeck(d,{catalog,equipment,stats:statsData,previous:P.members});persist();
+      setPlannerMembers(P,membersFromDeck(d,{catalog,equipment,stats:statsData,previous:P.members}));persist();
       notice(`已导入编队 ${d.index}「${d.name}」：卡面、突破、泪、编队技能、饰品、初期 SP 已带入，面板已按缓存推算（公式待校准，可点“面板明细”核对，手改的项会保留）。`);
       decks=null;mount(host);
     });

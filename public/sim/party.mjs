@@ -26,8 +26,18 @@ export function validatePlanner(p){
     if(m.deckSkillIds!==undefined&&(!Array.isArray(m.deckSkillIds)||m.deckSkillIds.some(x=>!Number.isInteger(x))))throw Error('编队技能格式无效');
   }
   if(p.settings!==undefined&&!object(p.settings))throw Error('排轴器设置格式无效');
-  if(p.designs!==undefined&&!object(p.designs))throw Error('排轴设计格式无效');
-  for(const d of Object.values(p.designs||{}))if(!object(d)||!Array.isArray(d.phases))throw Error('排轴设计格式无效');
+  function validateDesigns(designs){
+    if(designs!==undefined&&!object(designs))throw Error('排轴设计格式无效');
+    for(const d of Object.values(designs||{}))if(!object(d)||!Array.isArray(d.phases))throw Error('排轴设计格式无效');
+  }
+  validateDesigns(p.designs);
+  if(p.partyDesigns!==undefined){
+    if(!object(p.partyDesigns))throw Error('配队排轴记录格式无效');
+    for(const saved of Object.values(p.partyDesigns)){
+      if(!object(saved)||!object(saved.best))throw Error('配队排轴记录格式无效');
+      validateDesigns(saved.designs);
+    }
+  }
   return p;
 }
 
@@ -70,7 +80,7 @@ export function membersFrom(planner,archive,catalog){
       skillLevels,
       extraStyleIds:owned.length?owned:sameChar,
       // 来自游戏编队（membersFromDeck）的装备、初期 SP、泪、编队技能；手动配队时为空
-      initialSp:Number(m.initialSp)||0,tearLevel:Number(m.tearLevel)||0,equipment:m.equipment||{},deckSkillIds:m.deckSkillIds||[],allOrbSkills:!!m.allOrbSkills,latentIds:m.raw?.latentIds||[],
+      initialSp:Number(m.initialSp)||0,tearLevel:Number(m.tearLevel)||0,equipment:m.equipment||{},deckSkillIds:m.deckSkillIds||[],strictDeckSkills:!!m.strictDeckSkills,allOrbSkills:!!m.allOrbSkills,latentIds:m.raw?.latentIds||[],
       vitals:m.vitals||null,supportStyleId:m.supportStyleId||m.raw?.supportStyleId||null,supportLimitBreak:m.supportLimitBreak??m.raw?.supportLimitBreak??null,
     };
   });

@@ -12,7 +12,8 @@ function fixture({randomLoss=false}={}){
     // First turn: a random front member is targeted. Only member 0 is fragile.
     party[0].dpMax=1;party[0].hpMax=1;
     enemy.pattern={hp:{entries:[{order:1,skills:[1]}]}};
-    enemy.skills=[{id:1,name:'Synthetic hit',parts:[{skillType:'AttackFixedDamageDefinitely',targetType:'Single',power:[100,100]}]}];
+    enemy.skills=[{id:1,name:'Synthetic double hit',hitCount:2,hitRatios:[0.5,0.5],
+      parts:[{skillType:'AttackFixedDamageDefinitely',targetType:'Single',power:[100,100]}]}];
     turns.push({actions:[]});
   }
   turns.push({actions:[{u:0,s:'Skill0'}]});

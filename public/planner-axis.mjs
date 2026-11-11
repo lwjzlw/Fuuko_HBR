@@ -23,12 +23,16 @@ export function groupAxisRows(rows){
       continue;
     }
     if(r.kind==='round'){
-      const row={...r,actions:[],events:[],before:pending,after:[]};pending=[];
-      out.push(row);byId.set(r.roundId,row);continue;
+      const row={...r,actions:[],usedCommands:[],events:[],before:pending,after:[]};pending=[];
+      out.push(row);byId.set(r.roundId,row);
     }
+  }
+  // A free command can be used before OD, before its round header appears in the trace.
+  for(const r of rows){
     const row=byId.get(r.roundId);
     if(!row)continue;
     if(r.kind==='act')row.actions.push(r);
+    else if(r.kind==='command')row.usedCommands.push(r);
     else if(['break','kill','transcend'].includes(r.kind))row.events.push(r);
   }
   return out;
@@ -37,6 +41,12 @@ export function groupAxisRows(rows){
 export function renderAxisRows(rounds,{e,n,party}){
   const name=i=>party[i]?.name||'#'+i;
   const odAction=v=>`<div class="axis-od-action" data-od-window="${e(v.window)}" aria-label="${e(v.label)}"><b>${v.window==='turnEnd'?'后开 OD':'前开 OD'}</b><small>Lv.${e(String(v.level))}</small></div>`;
+  const commandAction=(used,requested)=>{
+    const planned=Math.max(used.length,requested||0);
+    if(!planned)return '';
+    const count=used.length===planned?`×${planned}`:`${used.length}/${planned} 次`;
+    return `<div class="axis-command-action"><b>魔界骑兵 ${count}</b><small>${used.length?'扣盾/血 '+n(used.reduce((sum,x)=>sum+(x.damage||0),0)):'未执行'}</small></div>`;
+  };
   return `<ol class="axis-turns">${rounds.flatMap(r=>{
     // 以计划顺序排三格；提前击杀仍保留后两人的位置，不能伪装成已行动。
     const planned=r.planned||[],used=new Set();
@@ -49,11 +59,14 @@ export function renderAxisRows(rounds,{e,n,party}){
     const chunks=Array.from({length:Math.ceil(cells.length/3)},(_,i)=>cells.slice(i*3,i*3+3));
     return chunks.map((chunk,ci)=>{
       while(chunk.length<3)chunk.push({empty:true});
-      const events=r.events.filter(v=>v.unit==null?ci===0:chunk.some(a=>a.unit===v.unit));
+      const events=r.events.filter(v=>v.unit==null||r.usedCommands?.some(c=>c.unit===v.unit)?ci===0:chunk.some(a=>a.unit===v.unit));
       const stopped=r.events.some(v=>v.kind==='kill')&&r.actions.at(-1)?.enemy?.hp<=0;
+      const commands=r.usedCommands||[];
+      const before=ci===0?commandAction(commands.filter(c=>c.beforeOd))+(r.before||[]).map(odAction).join('')
+        +commandAction(commands.filter(c=>!c.beforeOd),r.commands?.length):'';
       return `<li class="axis-row axis-${r.round==='extra'?'extra':r.round==='main'?'main':'inod'}" data-round="${e(r.round)}">
 <div class="axis-t"><b>T${r.turn}</b><span>${e(roundLabel(r.round))}${ci?'（续）':''}</span>${r.parentRound?`<small>${e(roundLabel(r.parentRound))} 内</small>`:''}</div>
-<div class="axis-body"><div class="axis-action-flow">${ci===0?(r.before||[]).map(odAction).join(''):''}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${e(a.skill||'未安排行动')}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
+<div class="axis-body"><div class="axis-action-flow">${before}<div class="axis-acts">${chunk.map((a,i)=>`<div class="axis-act${a.executed?'':' axis-skipped'}"><span class="axis-order">${ci*3+i+1}</span>${a.empty?`<span class="axis-empty">${r.round==='extra'?'无追加行动':'未安排行动'}</span>`:`<b>${e(name(a.unit))}</b><span>${a.backup?'备用 · ':''}${e(a.skill||'未安排行动')}${Number.isInteger(a.target)?' → '+e(name(a.target)):''}</span><small>${a.executed?`扣盾/血 ${n(a.damage||0)}${a.sp?.[a.unit]!=null?' · SP '+Math.round(a.sp[a.unit]*10)/10:''}`:a.skill?`未执行${stopped?'（已击杀）':''}`:r.round==='extra'?'有追加资格，未安排':'未安排'}</small>`}</div>`).join('')}</div>${ci===chunks.length-1?(r.after||[]).map(odAction).join(''):''}</div>
 ${events.length?`<div class="axis-events">${events.map(v=>`<span class="axis-event axis-${v.kind}">${v.unit!=null?e(name(v.unit))+' · ':''}${e(v.label)}</span>`).join('')}</div>`:''}</div></li>`;
     });
   }).join('')}</ol>`;
