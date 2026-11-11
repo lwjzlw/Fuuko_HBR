@@ -4,6 +4,7 @@ import {optimizerInput} from './fixtures/optimizer-input.mjs';
 import {optimize} from '../public/sim/optimizer.mjs';
 import {transferActorAxis} from '../public/sim/axis-neighborhood.mjs';
 import {longSearchKey,runLongSearch,waveScoreCeiling} from '../public/sim/long-search.mjs';
+import {SEARCH_PRESETS} from '../public/sim/optimizer-options.mjs';
 
 function startingAxis(input){
   return {label:'original',ruleIds:[],members:input.base,design:{phases:[{turns:[{actions:[{u:0,s:'Skill0'}]}]}]}};
@@ -37,6 +38,20 @@ test('checkpoint scope follows stock, selected party locks, rule settings and sc
   mutate(i=>{i.base[0].raw.supportStyleId='other';});mutate(i=>{i.archive.gameInventory={entries:[{amount:2}]};});
   mutate(i=>{i.opts.minSuccess=.5;});mutate(i=>{i.opts.battleVersion='different';});
   mutate(i=>{i.opts.searchRules=true;});mutate(i=>{i.opts.mcRuns=64;});
+});
+test('the normal long preset explores narrow and wide beams and enlarges its neighborhood across resumed rounds',async()=>{
+  const input=optimizerInput({opts:SEARCH_PRESETS.long});
+  input.incumbents=[startingAxis(input)];
+  let checkpoint;const beams=[],transfers=[],edits=[];
+  const runPass=async({opts})=>{
+    if(opts.longPassKind==='explore')beams.push(opts.beam);
+    if(opts.longPassKind==='transfer')transfers.push(opts.transferTrials);
+    if(opts.longPassKind==='axis')edits.push(opts.axisTrials);
+    return {top:[rating(input.incumbents[0],100)]};
+  };
+  await runLongSearch(input,{runPass,maxPasses:7,onCheckpoint:c=>{checkpoint=c;}});
+  await runLongSearch(input,{runPass,maxPasses:6,checkpoint});
+  assert.deepEqual(beams,[7,18,12,32]);assert.deepEqual(transfers,[96,192,384,512]);assert.deepEqual(edits,[160,220,360,512]);
 });
 test('the score ceiling includes each eligible multiplier and one counted turn per phase',()=>{
   const phases=Array.from({length:5},()=>({})),target={kind:'wave',difficulty:40,international:true,phases,

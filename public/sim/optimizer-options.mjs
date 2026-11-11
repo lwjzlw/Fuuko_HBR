@@ -21,7 +21,7 @@ export const SEARCH_PRESETS={
   quick:{label:'快',searchEvals:48,searchBatch:12,randomSeeds:12,screenBeam:4,beam:8,finalists:12,mcJudge:3,mcRuns:24,seed:97},
   standard:{label:'标准',searchEvals:144,searchBatch:12,randomSeeds:24,screenBeam:4,beam:12,finalists:18,mcJudge:3,mcRuns:32,seed:97},
   deep:{label:'深入',searchEvals:360,searchBatch:12,randomSeeds:36,screenBeam:5,beam:18,finalists:24,mcJudge:3,mcRuns:40,seed:97},
-  long:{label:'长时联合搜索',longSearch:true,searchEvals:32,searchBatch:8,randomSeeds:12,screenBeam:5,beam:18,finalists:4,mcJudge:3,mcRuns:40,seed:97},
+  long:{label:'长时联合搜索',longSearch:true,varyDepth:true,searchEvals:32,searchBatch:8,randomSeeds:12,screenBeam:6,beam:32,finalists:5,axisTrials:512,transferTrials:512,mcJudge:3,mcRuns:40,seed:97},
 };
 export function searchBudget(opts={}){
   const legacy=opts.searchMs==null?144:opts.searchMs<=0?0:Math.ceil(opts.searchMs/1000*2.4);

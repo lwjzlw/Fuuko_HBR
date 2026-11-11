@@ -10,7 +10,7 @@ export function longSearchKey(input){
   const {opts,base}=input;
   const party=opts.fixedTeam&&opts.keepLoadout?base:base.filter(m=>opts.fixedTeam||m.statsManual?.length)
     .map(m=>[m.styleId,(m.statsManual||[]).map(k=>[k,m.stats?.[k]])]);
-  return partyContextKey([LONG_SEARCH_VERSION,opts.battleVersion,opts.scopeKey||optimizationScope('',input),
+  return partyContextKey([LONG_SEARCH_VERSION,opts.varyDepth,opts.battleVersion,opts.scopeKey||optimizationScope('',input),
     party,input.cache.decks,opts.goal,opts.fixedTeam,opts.keepLoadout,opts.broad,opts.teamElement,
     opts.minSuccess,opts.minSuccessBasis,opts.maxTurns,opts.optimizeCards,opts.searchRules,opts.seed,
     opts.mcRuns,opts.axisTrials,opts.beam,opts.screenBeam,opts.searchEvals,opts.searchBatch,opts.randomSeeds,
@@ -27,6 +27,18 @@ export function waveScoreCeiling(target){
 }
 
 const identityCache=new WeakMap();
+
+// Wider beams can prune routes kept by a different width. Rotate the actual
+// search widths and local-edit budgets, in the same sequence after resuming.
+function depthFor(opts,kind,completed){
+  if(!opts.varyDepth||kind==='baseline'||kind==='validate')return {};
+  const i=completed%4,limit=(key,schedule)=>Math.min(opts[key]??schedule[i],schedule[i]);
+  if(kind==='transfer')return {transferTrials:limit('transferTrials',[96,192,384,512])};
+  const axisTrials=limit('axisTrials',[160,220,360,512]);
+  if(kind==='axis')return {axisTrials};
+  return {screenBeam:limit('screenBeam',[3,5,4,6]),beam:limit('beam',[7,18,12,32]),
+    finalists:limit('finalists',[3,4,4,5]),axisTrials};
+}
 function identity(candidate){
   if(!identityCache.has(candidate)){
     const members=candidate.members.map(m=>[rawIdentity(m.raw),m.deckSkillIds,m.statsManual,m.stats,m.front]);
@@ -86,10 +98,12 @@ export async function runLongSearch(input,{runPass,onProgress=()=>{},onCheckpoin
       axisEdits:stats.axisEdits,ceiling,validated,validationSeed:validated?validationSeed():null}});
   const exec=async(kind,parents)=>{
     const seed=((opts.seed??97)+Math.imul(rounds,0x9e3779b9))>>>0;
-    const pass={...input,incumbents:parents,opts:{...opts,longSearch:true,longPassKind:kind,longPassIndex:rounds,seed,
+    const depth=depthFor(opts,kind,counts[kind]||0);
+    const pass={...input,incumbents:parents,opts:{...opts,...depth,longSearch:true,longPassKind:kind,longPassIndex:rounds,seed,
       top:20,minSuccess:0,searchThreshold:opts.minSuccess,...(kind==='validate'?{mcSeed:validationSeed(),mcRuns:Math.max(opts.mcRuns||40,opts.validationRuns||96)}:{})}};
     const best=bank.find(t=>t.mc[normalizeSuccessBasis(opts.minSuccessBasis)]>=normalizeMinSuccess(opts.minSuccess));
-    const announce=p=>onProgress({...p,step:p.step||kind,pass:rounds+1,passName:phaseNames[kind],
+    const phase=depth.beam?phaseNames[kind]+'（束宽 '+depth.beam+'）':phaseNames[kind];
+    const announce=p=>onProgress({...p,step:p.step||kind,pass:rounds+1,passName:phase,
       best:best?.mc.scoreMean,elapsed:elapsed(),label:p.label||phaseNames[kind]});
     announce({done:0,total:0});
     const r=await runPass(pass,announce);

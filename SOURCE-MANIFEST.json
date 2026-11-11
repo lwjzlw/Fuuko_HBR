@@ -19,8 +19,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 12204,
-      "sha256": "68eccf36e3e455dd3c2e15abe9d82e79a2d9f8c4c44b70c69519b17d6e4b1fe4"
+      "bytes": 12407,
+      "sha256": "3e582700b51c9861829ddc4c3512f336c6734ab2c4b048ea516ea502f5602747"
     },
     {
       "path": "Update-Catalog.ps1",
@@ -35,7 +35,7 @@
     {
       "path": "hbr_app.py",
       "bytes": 11453,
-      "sha256": "d6dafe09f50c911d4558a11d8ca3d4ac86454dbcc92f53fccb8ef75b37582f23"
+      "sha256": "4206fa81506964a5fa3a0db15851d4663334a207a9f41b762dad86c00b840527"
     },
     {
       "path": "hbr_cache.py",
@@ -800,7 +800,7 @@
     {
       "path": "public/index.html",
       "bytes": 2663,
-      "sha256": "e07e5d8bf681b1992afaa3cbb34122ba4e0bba5d36d89339911db4964015626f"
+      "sha256": "cb8a3d98882a122a40790e999924bed236caf7d105c5a4f1792869a14ca97b87"
     },
     {
       "path": "public/legacy-storage.mjs",
@@ -914,13 +914,13 @@
     },
     {
       "path": "public/sim/long-search.mjs",
-      "bytes": 8325,
-      "sha256": "ab2a38f7bc85ea2f483f8887254f6ef2b6cea52b673cb91debceba9bae01d599"
+      "bytes": 9168,
+      "sha256": "5a821a62022caff3ec7e0a3f437361d4d8bebc9485600f1893459de049a32020"
     },
     {
       "path": "public/sim/optimizer-options.mjs",
-      "bytes": 3607,
-      "sha256": "acbb08ed512019f0174eb851a4b3c72d9932f24da9ba512137669e0510cf2298"
+      "bytes": 3656,
+      "sha256": "617c39dc0bd076fed9760ff8c0ac17815bf50ec14ae764b7db41e902efe66610"
     },
     {
       "path": "public/sim/optimizer-sub.mjs",
@@ -1119,8 +1119,8 @@
     },
     {
       "path": "tests/long-search.test.mjs",
-      "bytes": 6118,
-      "sha256": "2c1a52136b5b18c4ab6817289eb30ce8b35a2c8bd2a4c9b9999b01cd44383a4e"
+      "bytes": 7031,
+      "sha256": "12f46fb7bcceb4e24dd30639e2bd86a2e35baf2a22fe207dcf15514b020a82d6"
     },
     {
       "path": "tests/monte-carlo.test.mjs",
@@ -1230,7 +1230,7 @@
     {
       "path": "workbench.json",
       "bytes": 647,
-      "sha256": "c2b5c39bbf4aa75fb68ac19952dcadcf90f49e212ef787f9fc59a3b8944bfa1c"
+      "sha256": "a0e1d2bc3c368daec025b4b3cf5c763eca91eca88ed50b95f9619ccf93efa1ea"
     },
     {
       "path": "启动研究室.vbs",
