@@ -57,4 +57,4 @@ python -B -m unittest discover -s tests
 
 ## 支持项目
 
-如果这个项目帮到了你，欢迎[给风子投喂 🍙](https://afdian.com/a/fuuko)。投喂随意，项目照常开源。
+如果这个项目帮到了你，欢迎[给风子投喂 🍙](https://afdian.com/a/fuuko)。
