@@ -54,3 +54,7 @@ python -B -m unittest discover -s tests
 ## 许可
 
 代码用 [MIT](LICENSE) 协议开源。游戏名称、角色和美术素材归原权利方所有，数据和算法的来源写在 [NOTICE.md](NOTICE.md)。
+
+## 支持项目
+
+如果这个项目帮到了你，欢迎[给风子投喂 🍙](https://afdian.com/a/fuuko)。投喂随意，项目照常开源。
